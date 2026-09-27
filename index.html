@@ -1,0 +1,2448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Shape Drop</title>
+<!-- Fonts: if you're offline, the game still works and just uses a backup font. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@600;800&display=swap">
+
+<!--
+  =====================================================================
+   SHAPE DROP - a falling-and-merging puzzle game
+  =====================================================================
+   How this file is organized:
+     1. <style>  : CSS - how the page looks (colors, panels, buttons)
+     2. HTML     : the page layout (score panel, game canvas, key)
+     3. <script> : JavaScript - the game itself, in lettered sections:
+          A. SETTINGS         <- start here to experiment!
+          B. Helpers & game state
+          C. Sound effects    (made from code, no sound files)
+          D. Drawing shapes   (shapes, faces, power-ups)
+          E. Physics          (falling, bouncing, stacking)
+          F. Merging & power-ups
+          G. Eye candy        (shards, bubbles, glitches, sparks)
+          H. Game flow        (drop, score, combos, game over)
+          I. Drawing the game every frame
+          J. Side panels      (Next box and Evolution Key)
+          K. Controls         (mouse, touch, keyboard, buttons)
+          L. Main loop        (runs about 60 times per second)
+  =====================================================================
+-->
+
+<style>
+  /* ---------- Colors and fonts used across the page ---------- */
+  :root {
+    color-scheme: dark;
+    --ink: #05030c;
+    --panel: #0e0820;
+    --panel-2: #1a1036;
+    --line: #3a1f6b;
+    --text: #f7f2ff;
+    --muted: #a99bd6;
+    --gold: #f5ff1f;
+    --pink: #ff2bd6;
+    --cyan: #00f0ff;
+    --display: "Lilita One", "Arial Rounded MT Bold", "Trebuchet MS", system-ui, sans-serif;
+    --body: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+
+  html { background: var(--ink); }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    padding-block: 16px;
+    padding-inline: 16px;
+    color: var(--text);
+    font-family: var(--body);
+    background: radial-gradient(ellipse at 50% -10%, #2a0a4a 0%, var(--ink) 60%) fixed, var(--ink);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    user-select: none;                  /* no text highlighting while clicking fast */
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Three columns: left panel, game, right panel (the key) */
+  .layout {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    justify-content: center;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 16px;
+    width: 210px;
+    box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.08), 0 0 24px rgba(255, 43, 214, 0.12);
+  }
+
+  h1 {
+    margin: 0 0 14px;
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: 34px;
+    line-height: 0.95;
+    letter-spacing: 0.5px;
+    color: #ffe6fb;
+    /* neon sign glow */
+    text-shadow: 0 0 4px #fff, 0 0 10px var(--pink), 0 0 22px var(--pink), 0 0 40px var(--pink);
+    transform: rotate(-3deg);
+    animation: neonFlicker 6s infinite;
+  }
+  @keyframes neonFlicker {
+    0%, 91%, 93%, 100% { opacity: 1; }
+    92% { opacity: 0.55; }
+  }
+
+  h2 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+  }
+
+  .stats { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .stat .label { font-size: 11px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; }
+  .stat .value {
+    font-family: var(--display);
+    font-size: 40px;
+    line-height: 1.05;
+    font-variant-numeric: tabular-nums;
+    display: inline-block;
+    text-shadow: 0 0 8px rgba(0, 240, 255, 0.8), 0 0 20px rgba(0, 240, 255, 0.4);
+  }
+  .stat .value.best { font-size: 24px; color: var(--gold); text-shadow: 0 0 8px rgba(245, 255, 31, 0.7); }
+  .bump { animation: bump 0.25s ease-out; }
+  @keyframes bump { 40% { transform: scale(1.18); color: var(--gold); } }
+
+  .next-box { margin-bottom: 14px; }
+  #nextCanvas {
+    display: block;
+    width: 96px;
+    height: 96px;
+    background: var(--panel-2);
+    border-radius: 14px;
+    margin-bottom: 6px;
+  }
+  #nextLabel { font-size: 13px; color: var(--muted); min-height: 18px; }
+
+  #chainStrip { display: none; } /* only shown on phones (see bottom of CSS) */
+
+  .buttons { display: flex; flex-direction: column; gap: 8px; }
+  button {
+    font-family: var(--body);
+    font-weight: 800;
+    font-size: 14px;
+    padding: 10px 12px;
+    border: none;
+    border-radius: 12px;
+    background: var(--panel-2);
+    color: var(--text);
+    cursor: pointer;
+    box-shadow: 0 3px 0 #120d2c;
+    transition: transform 0.08s, background 0.2s;
+  }
+  button:hover { background: #26184d; box-shadow: 0 3px 0 #120d2c, 0 0 14px rgba(0, 240, 255, 0.35); }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 #120d2c; }
+  button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  button.primary {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: 22px;
+    letter-spacing: 1px;
+    background: linear-gradient(180deg, #ff5ce1, #ff2bd6);
+    color: #fff;
+    box-shadow: 0 4px 0 #8a0f72, 0 0 24px rgba(255, 43, 214, 0.6);
+    padding: 12px 34px;
+  }
+
+  .help { font-size: 12.5px; color: var(--muted); line-height: 1.55; margin-top: 12px; }
+  .help b { color: var(--text); }
+
+  /* ---------- The game canvas + game over screen ---------- */
+  .game-wrap { position: relative; flex-shrink: 0; }
+  #game {
+    display: block;
+    /* Starting size until the code fits it to the screen - never wider than the window */
+    width: min(436px, calc(100vw - 32px));
+    max-width: calc(100vw - 32px);
+    height: auto;
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    cursor: none;              /* the held shape is your pointer */
+    touch-action: none;        /* stop the page scrolling while playing on a phone */
+  }
+
+  #overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(10, 6, 25, 0.72);
+    border-radius: 18px;
+    backdrop-filter: blur(4px);
+  }
+  .overlay-box {
+    text-align: center;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 26px 30px;
+    border-radius: 22px;
+    animation: popIn 0.45s cubic-bezier(.2, 1.6, .4, 1);
+  }
+  @keyframes popIn { from { transform: scale(0.6); opacity: 0; } }
+  .overlay-box .title { font-family: var(--display); font-size: 40px; color: #ffe6fb; letter-spacing: 1px; text-shadow: 0 0 10px var(--pink), 0 0 26px var(--pink); }
+  .overlay-box .final { font-family: var(--display); font-size: 64px; line-height: 1; margin: 6px 0 4px; font-variant-numeric: tabular-nums; }
+  #newBest { color: var(--gold); font-weight: 800; letter-spacing: 2px; margin-top: 4px; }
+  .end-stats { display: flex; gap: 16px; justify-content: center; align-items: center; margin: 14px 0 20px; color: var(--muted); font-size: 12px; }
+  .end-stats b { display: block; color: var(--text); font-size: 18px; font-family: var(--display); font-weight: 400; }
+  #endShape { width: 56px; height: 56px; }
+
+  /* ---------- The Evolution Key (right panel) ---------- */
+  .key-panel { width: 270px; }
+  .key-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 8px;
+    border-radius: 12px;
+  }
+  .key-row canvas { width: 36px; height: 36px; flex-shrink: 0; }
+  .key-row .name { font-weight: 800; font-size: 14px; flex: 1; min-width: 0; }
+  .key-row .pts { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .key-row .badge {
+    font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
+    background: var(--panel-2); color: var(--muted); padding: 2px 6px; border-radius: 6px;
+  }
+  .key-row.reached { background: rgba(0, 240, 255, 0.1); box-shadow: inset 0 0 0 1px rgba(0, 240, 255, 0.6), 0 0 14px rgba(0, 240, 255, 0.25); }
+  .key-row.flash { animation: keyFlash 0.9s ease-out; }
+  @keyframes keyFlash { 0% { transform: scale(1.12); background: rgba(0, 240, 255, 0.45); } }
+  .key-arrow { padding-left: 22px; font-size: 10px; line-height: 11px; color: var(--muted); }
+  .key-note { font-size: 12.5px; color: var(--muted); margin: 10px 0 8px; line-height: 1.45; }
+  .key-note b { color: var(--text); }
+  .swatches { display: flex; gap: 6px; margin-bottom: 12px; }
+  .swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.5); }
+  .power-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .power-row canvas { width: 34px; height: 34px; flex-shrink: 0; }
+  .power-row div { font-size: 12px; line-height: 1.3; color: var(--muted); }
+  .power-row b { color: var(--text); }
+
+  /* ---------- Phones and small screens ----------
+     Game on top with a compact score bar above it, key underneath. */
+  @media (max-width: 1000px) {
+    body { align-items: flex-start; }
+    .layout { flex-direction: column; align-items: center; gap: 10px; width: 100%; }
+    .panel { width: 100%; max-width: 600px; padding: 10px 12px; border-radius: 14px; }
+    .left-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+    /* Score and Next are drawn inside the game on phones, to leave room for the tall box */
+    .left-panel h1, .left-panel .help, #nextLabel, .left-panel .stats, .left-panel .next-box { display: none; }
+    .stats { flex-direction: row; gap: 14px; margin: 0; }
+    .stat .label { font-size: 10px; letter-spacing: 1px; }
+    .stat .value { font-size: 28px; }
+    .stat .value.best { font-size: 20px; }
+    .next-box { display: flex; align-items: center; gap: 6px; margin: 0; }
+    .next-box h2 { margin: 0; font-size: 10px; letter-spacing: 1px; }
+    #nextCanvas { width: 50px; height: 50px; margin: 0; border-radius: 10px; }
+    .buttons { flex-direction: row; flex: 1 1 100%; gap: 6px; }
+    .buttons button { flex: 1; padding: 7px 4px; font-size: 12px; }
+    #chainStrip { display: block; width: 100%; height: 34px; }
+    .key-panel { width: 100%; max-width: 600px; }
+    .overlay-box { padding: 18px 16px; }
+    .overlay-box .final { font-size: 48px; }
+    .end-stats { gap: 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bump, .key-row.flash, .overlay-box, h1 { animation: none; }
+  }
+</style>
+</head>
+
+<body>
+  <div class="layout">
+
+    <!-- ========== LEFT PANEL: score, next shape, buttons ========== -->
+    <div class="panel left-panel">
+      <h1>Shape<br>Drop</h1>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="label">Score</div>
+          <div class="value" id="score">0</div>
+        </div>
+        <div class="stat">
+          <div class="label">Best · <span id="bestModeName">classic</span></div>
+          <div class="value best" id="best">0</div>
+        </div>
+      </div>
+
+      <div class="next-box">
+        <h2>Next</h2>
+        <canvas id="nextCanvas"></canvas>
+        <div id="nextLabel"></div>
+      </div>
+
+      <!-- A tiny version of the Evolution Key, only visible on phones -->
+      <canvas id="chainStrip"></canvas>
+
+      <div class="buttons">
+        <button id="modeBtn">Mode: Classic</button>
+        <button id="muteBtn">🔊 Sound on</button>
+        <button id="restartBtn">↻ Restart</button>
+      </div>
+
+      <div class="help">
+        <b>Move:</b> mouse or ← →<br>
+        <b>Drop:</b> click or Space<br>
+        <b>Pause:</b> P &nbsp; <b>Mute:</b> M<br>
+        Match two shapes to merge them into the next one. Quick merges in a row build a combo!
+      </div>
+    </div>
+
+    <!-- ========== MIDDLE: the game itself ========== -->
+    <div class="game-wrap">
+      <canvas id="game"></canvas>
+
+      <!-- Game over screen (hidden until the game ends) -->
+      <div id="overlay" hidden>
+        <div class="overlay-box">
+          <div class="title">GAME OVER</div>
+          <div class="final" id="finalScore">0</div>
+          <div id="newBest" hidden>★ NEW HIGH SCORE ★</div>
+          <div class="end-stats">
+            <canvas id="endShape"></canvas>
+            <div><b id="endShapeName">Circle</b>biggest shape</div>
+            <div><b id="endMerges">0</b>merges</div>
+            <div><b id="endCombo">x1</b>best combo</div>
+          </div>
+          <button class="primary" id="playAgainBtn">Play Again</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== RIGHT PANEL: the Evolution Key ========== -->
+    <div class="panel key-panel">
+      <h2>Evolution Key</h2>
+      <div id="keyList"></div>
+      <div id="keyExtra"></div>
+    </div>
+
+  </div>
+
+<script>
+/* =====================================================================
+   A. SETTINGS - change these numbers to experiment!
+   Save the file, then refresh the browser to see your changes.
+   ===================================================================== */
+
+// ---- Movement & physics ----
+const GRAVITY = 1500;          // How fast shapes fall. Bigger = faster.
+const BOUNCINESS = 0.15;       // 0 = no bounce, 1 = super bouncy.
+const FRICTION = 0.1;          // How "grippy" shapes are against each other (0 to 1).
+const DROP_COOLDOWN = 0.45;    // Seconds you must wait between drops.
+const KEY_MOVE_SPEED = 420;    // How fast the arrow keys move your shape (pixels per second).
+
+// ---- Container ----
+// A tight, tall box: shapes can't just spread out, so the pile climbs fast.
+const CONTAINER_START_WIDTH = 280;   // Starting width of the box (pixels). Try 380 for an easier, wider box.
+const CONTAINER_HEIGHT = 640;        // Height of the box (pixels).
+const CONTAINER_EXPAND_AMOUNT = 50;  // How much wider each "Bigger Box" power-up makes it.
+const MAX_EXPANSIONS = 2;            // How many times the box can grow.
+const GAME_OVER_DELAY = 2.5;         // Seconds a shape may stay above the red line before you lose.
+
+// ---- Which shapes drop ----
+const DROPPABLE_TIERS = 5;     // Only the first N shapes in the chain drop (5 = Circle to Hexagon). 4 = easier.
+
+// ---- Color Mode ----
+const NUM_COLORS = 3;          // Colors used in Color Mode (2 = easy, 3 = medium, 4-5 = hard).
+const COLOR_PALETTE = ['#ff2e63', '#00f0ff', '#f5ff1f', '#39ff14', '#c02cff']; // neon red, cyan, yellow, green, purple
+
+// ---- Sticky shapes ----
+// Sometimes a shape drops covered in glowing goo. It glues itself to whatever it
+// touches (other shapes, the floor, the walls) until the goo dries - or until you merge it.
+const STICKY_CHANCE = 0.12;    // Chance a dropped shape is sticky (0.12 = about 1 in 8). 0 turns them off.
+const STICKY_SAFE_DROPS = 5;   // No sticky shapes during your first N drops.
+const STICKY_TIME = 9;         // Seconds before the goo dries up and the shape is normal again.
+const STICKY_MAX_LINKS = 3;    // How many things one sticky shape can glue itself to.
+
+// ---- Power-ups ----
+const POWERUP_CHANCE = 0.07;   // Chance each drop is a power-up (0.07 = 7%, about 1 in 14).
+const POWERUP_SAFE_DROPS = 8;  // No power-ups during your first N drops.
+const POWERUP_RADIUS = 20;     // Size of the power-up orbs.
+const BOMB_RADIUS = 65;        // How far the bomb blast reaches.
+const POWERUPS = {
+  // enabled: false turns one off. A higher weight makes it show up more than the others.
+  expand:   { enabled: true, weight: 1,   name: 'Bigger Box', about: 'Makes the container wider.' },
+  wildcard: { enabled: true, weight: 1.2, name: 'Wildcard',   about: 'Upgrades the first shape it touches.' },
+  bomb:     { enabled: true, weight: 1,   name: 'Bomb',       about: 'Blasts away the shapes where it lands.' },
+  shake:    { enabled: true, weight: 0.7, name: 'Shake Up',   about: 'Jolts the pile and knocks off all sticky goo.' },
+};
+
+// ---- Scoring ----
+const COMBO_WINDOW = 1.0;      // Seconds you have to make the next merge to keep a combo going.
+const COMBO_BONUS = 0.5;       // Each combo step adds +50% points (x1.5, x2, x2.5 ...).
+const MAX_COMBO_MULTIPLIER = 3; // Combo points never go above this multiplier.
+const MAX_MERGE_BONUS = 150;   // Points for merging two Suns (the last shape). They vanish!
+
+// ---- Eye candy ----
+const EFFECTS_LEVEL = 2;       // 0 = calm, 1 = normal, 2 = maximum eye candy.
+const SCREEN_SHAKE = true;     // Shake the screen on big merges and bombs.
+const SHOW_FACES = true;       // Cute faces on the shapes.
+
+// ---- The evolution chain ----
+// Two of a shape merge into the NEXT shape in this list.
+//   type:   how it's drawn ('circle', 'polygon', 'star', 'heart', 'sun')
+//   sides:  number of sides or points (polygon, star, sun)
+//   radius: size in pixels (the physics treats every shape as a circle this size)
+//   color:  its neon color in Classic Mode (rainbow order, so the chain is easy to learn)
+//   points: points for CREATING this shape with a merge
+const SHAPE_CHAIN = [
+  { name: 'Circle',   type: 'circle',             radius: 15, color: '#ff2e63', points: 1  },
+  { name: 'Triangle', type: 'polygon', sides: 3,  radius: 21, color: '#ff8a00', points: 3  },
+  { name: 'Square',   type: 'polygon', sides: 4,  radius: 28, color: '#f5ff1f', points: 6  },
+  { name: 'Pentagon', type: 'polygon', sides: 5,  radius: 36, color: '#39ff14', points: 10 },
+  { name: 'Hexagon',  type: 'polygon', sides: 6,  radius: 46, color: '#00f0ff', points: 15 },
+  { name: 'Star',     type: 'star',    sides: 5,  radius: 58, color: '#4d7cff', points: 21 },
+  { name: 'Heart',    type: 'heart',              radius: 72, color: '#c02cff', points: 28 },
+  { name: 'Sun',      type: 'sun',     sides: 12, radius: 88, color: '#ff2bd6', points: 36 },
+];
+
+
+/* =====================================================================
+   B. HELPERS & GAME STATE
+   ===================================================================== */
+
+// ---- Layout, worked out from the settings (no need to edit) ----
+// (0,0) is the TOP-LEFT of the game; y gets bigger going DOWN.
+const SIDE_MARGIN = 28;
+const W = CONTAINER_START_WIDTH + SIDE_MARGIN * 2;  // game width
+const DROP_Y = 54;                                  // where your held shape hangs
+const CONTAINER_TOP = 108;                          // the red danger line
+const FLOOR_Y = CONTAINER_TOP + CONTAINER_HEIGHT;   // the floor of the box
+const H = FLOOR_Y + 18;                             // game height
+const CENTER_X = W / 2;
+const LAST = SHAPE_CHAIN.length - 1;                // index of the final shape (the Sun)
+const PHYSICS_STEP = 1 / 120;                       // physics runs 120 times a second
+const SOLVER_ITERATIONS = 4;                        // times per step we untangle overlaps
+const POP_TIME = 0.55;                              // length of the "boing" when a shape is born
+const GROW_TIME = 0.2;                              // how fast a new shape grows to full size
+const GLITCH_TIME = 0.26;                           // length of the glitch flicker on new shapes
+const DISPLAY_FONT = '"Lilita One", "Arial Rounded MT Bold", "Trebuchet MS", sans-serif';
+
+// People who turn on "reduce motion" in their device settings get calmer effects.
+const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const FX = REDUCED_MOTION ? Math.min(EFFECTS_LEVEL, 1) : EFFECTS_LEVEL;
+
+// ---- Small math helpers ----
+const TAU = Math.PI * 2;
+const rand = (a = 0, b = 1) => a + Math.random() * (b - a);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const smooth = t => t * t * (3 - 2 * t);
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+const easeOutBack = t => 1 + 2.70158 * Math.pow(t - 1, 3) + 1.70158 * Math.pow(t - 1, 2);
+const easeOutElastic = t => t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * (TAU / 3)) + 1;
+function rotatePoint(x, y, a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return [x * c - y * s, x * s + y * c];
+}
+
+// Makes a hex color lighter (amount > 0) or darker (amount < 0).
+const tintCache = {};
+function tint(hex, amount) {
+  const key = hex + amount;
+  if (tintCache[key]) return tintCache[key];
+  const n = parseInt(hex.slice(1), 16);
+  let rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  rgb = rgb.map(v => Math.round(amount > 0 ? v + (255 - v) * amount : v * (1 + amount)));
+  return (tintCache[key] = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`);
+}
+
+// ---- The canvas we draw the game on ----
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const DPR = Math.min(window.devicePixelRatio || 1, 2); // keeps drawings sharp on high-res screens
+canvas.width = W * DPR;
+canvas.height = H * DPR;
+const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
+
+// ---- Everything that changes while you play ----
+let bodies = [];         // every shape and power-up inside the box
+let fx = [];             // every visual effect (shards, bubbles, sparks, texts...)
+let floaters = [];       // faint shapes drifting in the background
+let state = 'playing';   // 'playing', 'paused', 'ending' (shapes popping) or 'over'
+let colorMode = false;   // false = Classic (shape only), true = Color Mode (shape + color)
+let muted = false;
+
+let score = 0, shownScore = 0, highScore = 0;
+let currentItem = null;  // the shape you're holding
+let nextItem = null;     // the shape in the Next box
+let heldX = CENTER_X;    // left/right position of your held shape
+let dropCooldown = 0;
+let dropsCount = 0;
+let lastWasPower = false;
+
+let containerWidth = CONTAINER_START_WIDTH;        // current width (animates when growing)
+let targetContainerWidth = CONTAINER_START_WIDTH;  // width it's growing toward
+let expansions = 0;
+let camZoom = 1;         // the camera zooms out when the box gets wider
+
+let mergeQueue = [];     // pairs of shapes waiting to merge
+let powerQueue = [];     // power-ups waiting to go off
+let nextId = 1;
+let maxTierReached = 0;
+let comboCount = 0, comboTimer = 0, bestCombo = 1, mergesCount = 0;
+
+let shake = 0;           // screen shake strength
+let screenGlitch = 0;    // full-screen glitch timer (huge merges)
+let slowMo = 0;          // slow-motion timer (huge merges)
+let gameTime = 0;
+let danger = false;      // true while something is over the red line
+let dangerTick = 0;
+let banner = null;       // big message across the top ("NEW SHAPE!", "BOOM!")
+let endingQueue = [], endingTimer = 0;
+let hudInCanvas = false;  // phones: score and Next are drawn inside the game
+const keysDown = {};
+
+
+/* =====================================================================
+   C. SOUND EFFECTS - built from code with the Web Audio API
+   ===================================================================== */
+let audioCtx = null, master = null, noiseBuffer = null;
+
+// Browsers only allow sound after the player clicks or presses a key,
+// so we switch the sound system on at the first input.
+function initAudio() {
+  if (!audioCtx) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      master = audioCtx.createGain();
+      master.gain.value = 0.55;
+      master.connect(audioCtx.destination);
+      // One second of random static, reused for pops and explosions
+      noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
+      const d = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    } catch (e) { return; }
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+// A single note. "to" makes the pitch slide (great for bloops).
+function tone(freq, dur, { type = 'sine', vol = 0.2, to = null, delay = 0 } = {}) {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime + delay;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  if (to) osc.frequency.exponentialRampToValueAtTime(to, t + dur);
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(vol, t + 0.008);   // quick fade in (no clicks)
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);  // fade out
+  osc.connect(gain).connect(master);
+  osc.start(t);
+  osc.stop(t + dur + 0.02);
+}
+
+// A burst of filtered static: high = "pop!", low = "boom!"
+function noise(dur, { vol = 0.3, filter = 'lowpass', freq = 1000, delay = 0 } = {}) {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime + delay;
+  const src = audioCtx.createBufferSource();
+  const f = audioCtx.createBiquadFilter();
+  const gain = audioCtx.createGain();
+  src.buffer = noiseBuffer;
+  f.type = filter;
+  f.frequency.value = freq;
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f).connect(gain).connect(master);
+  src.start(t, Math.random() * 0.5);
+  src.stop(t + dur + 0.02);
+}
+
+// Notes of a happy (pentatonic) scale - merges climb up it, so combos sound musical
+const SCALE = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26, 28, 31];
+const noteFreq = step => 262 * Math.pow(2, SCALE[clamp(step, 0, SCALE.length - 1)] / 12);
+
+const sounds = {
+  drop:   () => tone(190, 0.09, { type: 'triangle', vol: 0.12, to: 110 }),
+  bubble: (delay = 0) => {                           // soapy "pop!"
+    noise(0.05, { vol: 0.16, filter: 'highpass', freq: 2600, delay });
+    tone(rand(900, 1300), 0.06, { vol: 0.07, to: 2200, delay });
+  },
+  merge:  (tier, combo) => {                         // bloop that climbs with tier and combo
+    const f = noteFreq(tier + combo - 1);
+    tone(f * 0.5, 0.2, { vol: 0.26, to: f * 1.25 });
+    tone(f, 0.14, { type: 'triangle', vol: 0.09, delay: 0.05 });
+    sounds.bubble(0.03);
+  },
+  supernova: () => {
+    [0, 4, 7, 9, 12].forEach((s, i) => tone(523 * Math.pow(2, s / 12), 0.5, { type: 'triangle', vol: 0.13, delay: i * 0.07 }));
+    noise(1.0, { vol: 0.25, filter: 'bandpass', freq: 1800 });
+  },
+  power:  () => [880, 1108, 1318, 1760].forEach((f, i) => tone(f, 0.16, { type: 'triangle', vol: 0.1, delay: i * 0.05 })),
+  bomb:   () => { noise(0.8, { vol: 0.6, freq: 700 }); tone(120, 0.55, { vol: 0.4, to: 32 }); },
+  shake:  () => { noise(0.9, { vol: 0.35, freq: 220 }); tone(70, 0.8, { type: 'sawtooth', vol: 0.08, to: 40 }); },
+  expand: () => { tone(220, 0.45, { vol: 0.15, to: 660 }); tone(330, 0.45, { type: 'triangle', vol: 0.08, to: 990, delay: 0.05 }); },
+  tick:   () => tone(1250, 0.04, { type: 'square', vol: 0.035 }),
+  splat:  () => { noise(0.12, { vol: 0.2, filter: 'lowpass', freq: 500 }); tone(160, 0.12, { vol: 0.12, to: 70 }); },
+  over:   () => { tone(440, 0.3, { type: 'triangle', vol: 0.18, to: 330 }); tone(330, 0.6, { type: 'triangle', vol: 0.18, to: 110, delay: 0.28 }); },
+};
+
+
+/* =====================================================================
+   D. DRAWING SHAPES
+   ===================================================================== */
+
+// Each shape's outline as a list of points around (0,0), sized for radius 1.
+// We build these once, then just scale them up when drawing.
+function buildOutline(def) {
+  const pts = [];
+  if (def.type === 'circle') {
+    for (let i = 0; i < 20; i++) pts.push([Math.cos(i / 20 * TAU), Math.sin(i / 20 * TAU)]);
+  } else if (def.type === 'polygon') {
+    const n = def.sides;
+    const R = 0.95 / ((1 + Math.cos(Math.PI / n)) / 2); // pointy shapes drawn a bit bigger so they look like they touch
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI / 2 + i / n * TAU;
+      pts.push([Math.cos(a) * R, Math.sin(a) * R]);
+    }
+  } else if (def.type === 'star' || def.type === 'sun') {
+    const outer = def.type === 'star' ? 1.13 : 1.08;
+    const inner = def.type === 'star' ? 0.58 : 0.87;
+    for (let i = 0; i < def.sides * 2; i++) {
+      const a = -Math.PI / 2 + i / (def.sides * 2) * TAU;
+      const rad = i % 2 === 0 ? outer : inner;
+      pts.push([Math.cos(a) * rad, Math.sin(a) * rad]);
+    }
+  } else if (def.type === 'heart') {
+    for (let i = 0; i < 40; i++) {       // the classic heart curve from math class
+      const t = i / 40 * TAU;
+      const x = 16 * Math.pow(Math.sin(t), 3);
+      const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+      pts.push([x / 15, (y - 2.6) / 15]);
+    }
+  }
+  return pts;
+}
+const OUTLINES = SHAPE_CHAIN.map(buildOutline);
+
+// Where the face sits on each kind of shape
+function faceSpot(def) {
+  if (def.type === 'polygon' && def.sides === 3) return { y: 0.2, gap: 0.24 };
+  if (def.type === 'heart') return { y: -0.06, gap: 0.3 };
+  if (def.type === 'star') return { y: 0.06, gap: 0.26 };
+  return { y: 0, gap: 0.3 };
+}
+
+// Traces a shape's outline around (0,0). It doesn't paint it yet.
+function traceShape(c, tier, r) {
+  c.beginPath();
+  if (SHAPE_CHAIN[tier].type === 'circle') { c.arc(0, 0, r, 0, TAU); return; }
+  const pts = OUTLINES[tier];
+  c.moveTo(pts[0][0] * r, pts[0][1] * r);
+  for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0] * r, pts[i][1] * r);
+  c.closePath();
+}
+
+// A flat, single-color version of a shape (used for glitch ghosts and backgrounds)
+function drawSilhouette(c, tier, x, y, r, angle, color, strokeOnly = false) {
+  c.save();
+  c.translate(x, y);
+  c.rotate(angle);
+  traceShape(c, tier, r);
+  if (strokeOnly) { c.strokeStyle = color; c.lineWidth = 2; c.stroke(); }
+  else { c.fillStyle = color; c.fill(); }
+  c.restore();
+}
+
+// Paints a full neon shape (with a face) at (x, y): a dark glassy body,
+// a glowing inside, and a bright neon-tube outline with a soft halo.
+// o = options: sx/sy (squash), look (where the eyes look), blink, mood, face
+function drawShape(c, tier, x, y, r, angle, color, o = {}) {
+  c.save();
+  c.translate(x, y);
+  if (o.sx) c.scale(o.sx, o.sy);     // squash & stretch when landing
+  c.rotate(angle);
+  c.lineJoin = 'round';
+
+  // Glassy body: dark at the edge, glowing with the neon color in the middle
+  const grad = c.createRadialGradient(0, -r * 0.15, r * 0.1, 0, 0, r * 1.2);
+  grad.addColorStop(0, withAlpha(color, 0.55));
+  grad.addColorStop(0.7, withAlpha(color, 0.22));
+  grad.addColorStop(1, withAlpha(color, 0.1));
+  traceShape(c, tier, r);
+  c.fillStyle = '#0b0718';
+  c.fill();
+  c.fillStyle = grad;
+  c.fill();
+
+  // Neon tube: two soft halo strokes, then a bright core
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  c.strokeStyle = withAlpha(color, 0.16);
+  c.lineWidth = Math.max(6, r * 0.42);
+  c.stroke();
+  c.strokeStyle = withAlpha(color, 0.35);
+  c.lineWidth = Math.max(3.5, r * 0.2);
+  c.stroke();
+  c.restore();
+  c.strokeStyle = tint(color, 0.55);
+  c.lineWidth = Math.max(1.6, r * 0.075);
+  c.stroke();
+
+  // Little shine on the glass (always top-left, even while spinning)
+  const [lx, ly] = rotatePoint(-0.36 * r, -0.4 * r, -angle);
+  c.save();
+  c.clip();
+  c.globalAlpha *= 0.3;
+  c.fillStyle = '#fff';
+  c.beginPath();
+  c.ellipse(lx, ly, r * 0.26, r * 0.12, -angle - 0.7, 0, TAU);
+  c.fill();
+  c.restore();
+
+  if (SHOW_FACES && o.face !== false && r > 8) drawFace(c, SHAPE_CHAIN[tier], r, angle, o, color);
+  c.restore();
+}
+
+// Turns '#ff2e63' + 0.5 into 'rgba(255,46,99,0.5)'
+const alphaCache = {};
+function withAlpha(hex, a) {
+  const key = hex + a;
+  if (alphaCache[key]) return alphaCache[key];
+  const n = parseInt(hex.slice(1), 16);
+  return (alphaCache[key] = `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`);
+}
+
+// Eyes, cheeks and a mouth. Eyes follow the shape you're holding!
+function drawFace(c, def, r, angle, o, color) {
+  const spot = faceSpot(def);
+  const fy = spot.y * r, ex = spot.gap * r;
+  const er = Math.max(1.4, r * 0.14);
+  const ink = '#0a0614';                  // pupils
+  const glow = tint(color, 0.7);          // neon lines for mouth and happy eyes
+
+  // Turn the "look" direction into the shape's own spun-around coordinates
+  let lookX = 0, lookY = 0;
+  if (o.look) {
+    const [dx, dy] = rotatePoint(o.look.x, o.look.y, -angle);
+    const d = Math.hypot(dx, dy) || 1;
+    lookX = dx / d; lookY = dy / d;
+  }
+
+  // Glowing cheeks
+  c.fillStyle = withAlpha(color, 0.45);
+  for (const side of [-1, 1]) {
+    c.beginPath();
+    c.ellipse(side * ex * 1.5, fy + r * 0.14, r * 0.1, r * 0.06, 0, 0, TAU);
+    c.fill();
+  }
+
+  c.lineCap = 'round';
+  c.lineWidth = Math.max(1, r * 0.06);
+  c.strokeStyle = glow;
+  for (const side of [-1, 1]) {
+    const x = side * ex, y = fy - r * 0.06;
+    if (o.mood === 'happy') {             // ^ ^
+      c.beginPath();
+      c.arc(x, y + er * 0.4, er * 0.75, Math.PI * 1.15, Math.PI * 1.85);
+      c.stroke();
+    } else if (o.blink) {                 // - -
+      c.beginPath();
+      c.moveTo(x - er * 0.8, y); c.lineTo(x + er * 0.8, y);
+      c.stroke();
+    } else {                              // o o
+      const scared = o.mood === 'worried';
+      c.fillStyle = '#fff';
+      c.beginPath(); c.arc(x, y, er * (scared ? 1.15 : 1), 0, TAU); c.fill();
+      c.fillStyle = ink;
+      const pr = er * (scared ? 0.4 : 0.58);
+      const px = x + lookX * er * 0.4, py = y + lookY * er * 0.4;
+      c.beginPath(); c.arc(px, py, pr, 0, TAU); c.fill();
+      c.fillStyle = '#fff';
+      c.beginPath(); c.arc(px - pr * 0.35, py - pr * 0.35, pr * 0.35, 0, TAU); c.fill();
+    }
+  }
+
+  // Mouth
+  const my = fy + r * 0.13;
+  if (o.mood === 'happy') {               // big open smile
+    c.fillStyle = ink;
+    c.beginPath(); c.arc(0, my, r * 0.13, 0, Math.PI); c.closePath(); c.fill(); c.stroke();
+    c.fillStyle = '#ff5c8a';
+    c.beginPath(); c.arc(0, my + r * 0.08, r * 0.06, Math.PI, TAU); c.fill();
+  } else if (o.mood === 'worried') {      // little "o"
+    c.beginPath(); c.arc(0, my + r * 0.05, r * 0.055, 0, TAU); c.stroke();
+  } else {                                // gentle smile
+    c.beginPath(); c.arc(0, my - r * 0.02, r * 0.1, Math.PI * 0.2, Math.PI * 0.8); c.stroke();
+  }
+}
+
+// Glowing power-up orbs, each with its own icon
+const POWER_COLORS = { expand: '#34e89e', bomb: '#2e2650', shake: '#ff9f1c' };
+function drawPowerUp(c, type, x, y, r, t) {
+  c.save();
+  c.translate(x, y);
+  const hue = (t * 160) % 360;
+  const glowColor = type === 'wildcard' ? `hsl(${hue}, 95%, 62%)` : type === 'bomb' ? '#ff8a2a' : POWER_COLORS[type];
+
+  // Pulsing glow
+  c.shadowColor = glowColor;
+  c.shadowBlur = 18 + Math.sin(t * 6) * 7;
+  c.beginPath();
+  c.arc(0, 0, r, 0, TAU);
+  if (type === 'wildcard' && c.createConicGradient) {      // spinning rainbow
+    const g = c.createConicGradient(t * 3, 0, 0);
+    for (let i = 0; i <= 6; i++) g.addColorStop(i / 6, `hsl(${hue + i * 60}, 95%, 62%)`);
+    c.fillStyle = g;
+  } else {
+    c.fillStyle = type === 'wildcard' ? glowColor : POWER_COLORS[type];
+  }
+  c.fill();
+  c.shadowBlur = 0;
+  c.lineWidth = 2.5;
+  c.strokeStyle = 'rgba(255,255,255,0.9)';
+  c.stroke();
+
+  // The icon
+  c.strokeStyle = '#fff';
+  c.fillStyle = '#fff';
+  c.lineWidth = r * 0.15;
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+  if (type === 'expand') {                 // <-->
+    const s = r * 0.55;
+    c.beginPath();
+    c.moveTo(-s, 0); c.lineTo(s, 0);
+    c.moveTo(-s * 0.5, -s * 0.45); c.lineTo(-s, 0); c.lineTo(-s * 0.5, s * 0.45);
+    c.moveTo(s * 0.5, -s * 0.45); c.lineTo(s, 0); c.lineTo(s * 0.5, s * 0.45);
+    c.stroke();
+  } else if (type === 'wildcard') {        // ?
+    c.font = `${r * 1.3}px ${DISPLAY_FONT}`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.lineWidth = r * 0.18;
+    c.strokeStyle = 'rgba(0,0,0,0.35)';
+    c.strokeText('?', 0, r * 0.1);
+    c.fillText('?', 0, r * 0.1);
+  } else if (type === 'bomb') {            // fuse with a flickering spark
+    c.strokeStyle = '#d8b47a';
+    c.beginPath();
+    c.moveTo(r * 0.35, -r * 0.75);
+    c.quadraticCurveTo(r * 0.75, -r * 1.25, r * 1.0, -r * 1.05);
+    c.stroke();
+    c.fillStyle = Math.sin(t * 40) > 0 ? '#ffe066' : '#ff7b00';
+    c.beginPath(); c.arc(r * 1.0, -r * 1.05, r * 0.24, 0, TAU); c.fill();
+    c.fillStyle = 'rgba(255,255,255,0.4)';
+    c.beginPath(); c.arc(-r * 0.35, -r * 0.35, r * 0.24, 0, TAU); c.fill();
+  } else if (type === 'shake') {           // zig-zag
+    c.beginPath();
+    const s = r * 0.55;
+    c.moveTo(-s, 0);
+    for (let i = 1; i <= 4; i++) c.lineTo(-s + i * s * 0.5, i % 2 ? -s * 0.55 : s * 0.55);
+    c.stroke();
+  }
+
+  // Three sparkles orbiting the orb
+  c.fillStyle = 'rgba(255,255,255,0.85)';
+  for (let k = 0; k < 3; k++) {
+    const a = t * 3 + k * TAU / 3;
+    c.beginPath(); c.arc(Math.cos(a) * r * 1.45, Math.sin(a) * r * 1.45, 1.8, 0, TAU); c.fill();
+  }
+  c.restore();
+}
+
+// What color a shape is (depends on the mode)
+function colorOf(tier, colorIndex) {
+  return colorIndex === null || colorIndex === undefined ? SHAPE_CHAIN[tier].color : COLOR_PALETTE[colorIndex];
+}
+
+// Draws an "item" (a shape or power-up) - used for the held shape and the Next box
+function drawItem(c, item, x, y, scale = 1, look = null) {
+  if (item.kind === 'power') { drawPowerUp(c, item.power, x, y, POWERUP_RADIUS * scale, gameTime); return; }
+  const r = SHAPE_CHAIN[item.tier].radius * scale;
+  drawShape(c, item.tier, x, y, r, 0, colorOf(item.tier, item.color), { look });
+  if (item.sticky) drawGoo(c, x, y, r, gameTime, 1);
+}
+
+// Sticky goo: a wobbly, glowing slime coat with drips hanging off the bottom
+const GOO = '#b6ff3b';
+function drawGoo(c, x, y, r, t, alpha) {
+  c.save();
+  c.globalAlpha *= alpha;
+  c.translate(x, y);
+  // Wobbly blob outline
+  c.beginPath();
+  for (let i = 0; i <= 24; i++) {
+    const a = i / 24 * TAU;
+    const rr = r * (1.14 + 0.06 * Math.sin(a * 3 + t * 5) + 0.04 * Math.sin(a * 5 - t * 7));
+    const px = Math.cos(a) * rr, py = Math.sin(a) * rr;
+    i ? c.lineTo(px, py) : c.moveTo(px, py);
+  }
+  c.closePath();
+  c.fillStyle = withAlpha(GOO, 0.13);
+  c.fill();
+  c.globalCompositeOperation = 'lighter';
+  c.strokeStyle = withAlpha(GOO, 0.3);
+  c.lineWidth = Math.max(4, r * 0.22);
+  c.stroke();
+  c.strokeStyle = withAlpha(GOO, 0.85);
+  c.lineWidth = Math.max(1.5, r * 0.06);
+  c.stroke();
+  // Drips that stretch and snap back
+  c.fillStyle = withAlpha(GOO, 0.8);
+  for (const k of [-0.45, 0.1, 0.55]) {
+    const a = Math.PI / 2 + k;
+    const len = r * (0.18 + 0.14 * (0.5 + 0.5 * Math.sin(t * 3 + k * 9)));
+    const bx = Math.cos(a) * r * 1.12, by = Math.sin(a) * r * 1.12;
+    const dr = Math.max(1.5, r * 0.07);
+    c.beginPath();
+    c.moveTo(bx - dr, by);
+    c.lineTo(bx + dr, by);
+    c.lineTo(bx + dr * 0.6, by + len);
+    c.arc(bx, by + len, dr * 0.9, 0, Math.PI);
+    c.closePath();
+    c.fill();
+  }
+  c.restore();
+}
+
+// Goo strands between a sticky shape and the shapes it's glued to (they sag a little)
+function drawGooStrands(c, b) {
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  c.lineCap = 'round';
+  for (const l of b.links) {
+    const o = l.other;
+    const mx = (b.x + o.x) / 2, my = (b.y + o.y) / 2 + 8 + Math.sin(gameTime * 4 + b.id) * 3;
+    c.strokeStyle = withAlpha(GOO, 0.25);
+    c.lineWidth = 9;
+    c.beginPath(); c.moveTo(b.x, b.y); c.quadraticCurveTo(mx, my, o.x, o.y); c.stroke();
+    c.strokeStyle = withAlpha(GOO, 0.9);
+    c.lineWidth = 2.5;
+    c.stroke();
+  }
+  c.restore();
+}
+
+// A splat of goo when a sticky shape grabs something
+function gooSplat(b, x, y) {
+  addFx({ type: 'ring', x, y, r: 4, r1: b.r * 1.3, color: GOO, t: 0, dur: 0.35, width: 4 });
+  for (let i = 0; i < 10; i++) {
+    const a = rand(0, TAU), sp = rand(60, 200);
+    addFx({ type: 'drop', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60, r: rand(1.5, 3.5), hue: 85, t: 0, life: rand(0.35, 0.7) });
+  }
+}
+
+function itemRadius(item) {
+  return item.kind === 'power' ? POWERUP_RADIUS : SHAPE_CHAIN[item.tier].radius;
+}
+
+
+/* =====================================================================
+   E. PHYSICS - every shape is treated as a circle (a "body")
+   ===================================================================== */
+
+// Makes a new body (a shape or power-up inside the box)
+function createBody(item, x, y) {
+  const r = itemRadius(item);
+  return {
+    id: nextId++,
+    kind: item.kind,        // 'shape' or 'power'
+    tier: item.tier,        // position in SHAPE_CHAIN (shapes only)
+    color: item.color,      // color number in Color Mode, otherwise null
+    power: item.power,      // 'expand', 'wildcard', 'bomb' or 'shake' (power-ups only)
+    x, y,                   // position
+    vx: 0, vy: 0,           // velocity (speed + direction)
+    baseR: r,               // full size
+    r: r,                   // size right now (grows after a merge)
+    physFrom: 1,            // size it grows from (1 = already full size)
+    popFrom: 1,             // size the "boing" animation starts from
+    anim: 99,               // seconds since it was born (99 = no birth animation)
+    angle: 0,               // rotation (just for looks)
+    squash: 0, squashV: 0,  // jelly wobble when it lands
+    glitch: 0,              // glitch flicker timer
+    happy: 0,               // happy-face timer
+    blink: rand(1, 5),      // countdown to the next blink
+    age: 0,                 // seconds since it entered the box
+    overTime: 0,            // seconds spent above the danger line
+    dead: false,            // true = remove it
+    merging: false,         // true = already merging this step
+    triggered: false,       // true = power-up already went off
+    sticky: item.sticky ? STICKY_TIME : 0, // seconds of goo left (0 = not sticky)
+    gooActive: false,       // true once the goo has touched something (the drying timer starts)
+    pinned: false,          // true = glued to a wall or the floor (it won't move)
+    links: [],              // other shapes this sticky shape is glued to
+  };
+}
+
+// How easy a body is to push. Glued-down (pinned) bodies can't be pushed at all.
+function invMass(b) {
+  return b.pinned ? 0 : 1 / (b.r * b.r);
+}
+
+// Moves the whole simulation forward by a tiny slice of time (dt seconds)
+function physicsStep(dt) {
+  // Slide the walls toward their new width, and zoom the camera out to fit
+  containerWidth += (targetContainerWidth - containerWidth) * Math.min(1, dt * 4);
+  camZoom = Math.min(1, W / (containerWidth + SIDE_MARGIN * 2));
+
+  // 1) Gravity + movement
+  for (const b of bodies) {
+    b.age += dt;
+    b.anim += dt;
+    const g = b.anim < GROW_TIME ? smooth(b.anim / GROW_TIME) : 1;
+    b.r = b.baseR * (b.physFrom + (1 - b.physFrom) * g);  // grow smoothly after a merge
+    b.squashV += (-260 * b.squash - 16 * b.squashV) * dt; // jelly spring
+    b.squash += b.squashV * dt;
+    if (b.pinned) { b.vx = 0; b.vy = 0; continue; }   // glued in place
+    b.vy += GRAVITY * dt;
+    b.vx *= 0.999; b.vy *= 0.999;   // a tiny bit of air resistance
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.angle += (b.vx / b.r) * dt;   // roll as it moves sideways
+  }
+
+  // 2) Push overlapping shapes apart (a few times, so piles settle nicely)
+  for (let iter = 0; iter < SOLVER_ITERATIONS; iter++) {
+    for (let i = 0; i < bodies.length; i++) {
+      for (let j = i + 1; j < bodies.length; j++) collide(bodies[i], bodies[j]);
+    }
+    for (const b of bodies) if (b.links.length) pullGlue(b);
+    for (const b of bodies) keepInside(b);
+  }
+
+  // 3) Handle merges and power-ups that happened this step
+  processMerges();
+  processPowers();
+  bodies = bodies.filter(b => !b.dead);
+}
+
+// If two bodies overlap: push them apart and bounce them off each other
+function collide(a, b) {
+  if (a.dead || b.dead) return;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const minDist = a.r + b.r;
+  const distSq = dx * dx + dy * dy;
+  if (distSq >= minDist * minDist || distSq === 0) return; // not touching
+
+  checkContact(a, b);   // should they merge? is one a power-up?
+  if (a.sticky > 0 && b.kind === 'shape') glue(a, b);   // sticky goo grabs what it touches
+  if (b.sticky > 0 && a.kind === 'shape') glue(b, a);
+
+  const dist = Math.sqrt(distSq);
+  const nx = dx / dist, ny = dy / dist;   // direction from a to b
+  // Bigger shapes are "heavier" and get pushed less (inverse mass = 1 / size²)
+  const ima = invMass(a), imb = invMass(b), imSum = ima + imb;
+  if (imSum === 0) return;   // two glued-down shapes: nothing to push
+
+  const push = ((minDist - dist) * 0.8) / imSum;
+  a.x -= nx * push * ima; a.y -= ny * push * ima;
+  b.x += nx * push * imb; b.y += ny * push * imb;
+
+  // Bounce if they're moving toward each other
+  const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
+  const vn = rvx * nx + rvy * ny;
+  if (vn < 0) {
+    const j = (-(1 + BOUNCINESS) * vn) / imSum;
+    a.vx -= j * nx * ima; a.vy -= j * ny * ima;
+    b.vx += j * nx * imb; b.vy += j * ny * imb;
+    // Friction along the touching surfaces
+    const tx = -ny, ty = nx;
+    const jt = (-(rvx * tx + rvy * ty) / imSum) * FRICTION;
+    a.vx -= jt * tx * ima; a.vy -= jt * ty * ima;
+    b.vx += jt * tx * imb; b.vy += jt * ty * imb;
+    // Hard hits make both shapes wobble like jelly
+    if (vn < -140) {
+      const s = Math.min(0.18, -vn / 4000);
+      a.squash = Math.max(a.squash, s);
+      b.squash = Math.max(b.squash, s);
+    }
+  }
+}
+
+// Keeps a body inside the walls and above the floor
+function keepInside(b) {
+  const left = CENTER_X - containerWidth / 2;
+  const right = CENTER_X + containerWidth / 2;
+  if (b.pinned) return;
+  const touchingWall = b.x - b.r < left + 0.5 || b.x + b.r > right - 0.5;
+  if (b.x - b.r < left)  { b.x = left + b.r;  if (b.vx < 0) b.vx = -b.vx * BOUNCINESS; }
+  if (b.x + b.r > right) { b.x = right - b.r; if (b.vx > 0) b.vx = -b.vx * BOUNCINESS; }
+  // Sticky goo glues to a wall (once it has landed on something) or to the floor
+  if (b.sticky > 0 && ((touchingWall && b.gooActive) || b.y + b.r >= FLOOR_Y)) pin(b);
+  if (b.y + b.r > FLOOR_Y) {
+    b.y = FLOOR_Y - b.r;
+    if (b.vy > 140) b.squash = Math.max(b.squash, Math.min(0.2, b.vy / 3500));
+    if (b.vy > 0) b.vy = -b.vy * BOUNCINESS;
+    b.vx *= 0.99;
+    // Everything except the Wildcard goes off when it hits the floor
+    if (b.kind === 'power' && !b.triggered && b.power !== 'wildcard') {
+      b.triggered = true;
+      powerQueue.push({ power: b, other: null });
+    }
+  }
+}
+
+
+// ---- Sticky goo ----
+
+// Glue a sticky shape to another shape it touched
+function glue(s, other) {
+  s.gooActive = true;
+  if (s.links.length >= STICKY_MAX_LINKS || s.links.some(l => l.other === other)) return;
+  s.links.push({ other, len: Math.max(s.r + other.r, Math.hypot(other.x - s.x, other.y - s.y)) });
+  if (s.links.length === 1) { sounds.splat(); gooSplat(s, other.x, other.y); }
+}
+
+// Glue a sticky shape to the wall or floor it touched
+function pin(b) {
+  b.gooActive = true;
+  b.pinned = true;
+  b.vx = b.vy = 0;
+  sounds.splat();
+  gooSplat(b, b.x, b.y + b.r);
+}
+
+// Goo strands pull glued shapes back to their glued distance (like stretchy slime)
+function pullGlue(s) {
+  s.links = s.links.filter(l => !l.other.dead);
+  for (const l of s.links) {
+    const o = l.other;
+    const dx = o.x - s.x, dy = o.y - s.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const ims = invMass(s), imo = invMass(o), sum = ims + imo;
+    if (sum === 0) continue;
+    const nx = dx / d, ny = dy / d;
+    const stretch = (d - l.len) * 0.5 / sum;          // how far to pull them together
+    s.x += nx * stretch * ims; s.y += ny * stretch * ims;
+    o.x -= nx * stretch * imo; o.y -= ny * stretch * imo;
+    // Make them move together along the strand (so the goo doesn't boing forever)
+    const rv = (o.vx - s.vx) * nx + (o.vy - s.vy) * ny;
+    const j = rv * 0.5 / sum;
+    s.vx += nx * j * ims; s.vy += ny * j * ims;
+    o.vx -= nx * j * imo; o.vy -= ny * j * imo;
+  }
+}
+
+// The goo dries up (or gets cleared): the shape becomes a normal shape again
+function unstick(b, quiet = false) {
+  if (!b.sticky && !b.pinned && !b.links.length) return;
+  b.sticky = 0;
+  b.pinned = false;
+  b.links = [];
+  if (!quiet) {
+    for (let i = 0; i < 8; i++) {
+      const a = rand(0, TAU);
+      addFx({ type: 'drop', x: b.x + Math.cos(a) * b.r, y: b.y + Math.sin(a) * b.r, vx: Math.cos(a) * 60, vy: Math.sin(a) * 60,
+              r: rand(1.5, 3), hue: 90, t: 0, life: rand(0.4, 0.7) });
+    }
+  }
+}
+
+
+/* =====================================================================
+   F. MERGING & POWER-UPS
+   ===================================================================== */
+
+// Called when two bodies touch. Decides if something special happens.
+function checkContact(a, b) {
+  if (a.kind === 'shape' && b.kind === 'shape') {
+    if (a.merging || b.merging || a.tier !== b.tier) return;
+    if (colorMode && a.color !== b.color) return;   // Color Mode: colors must match too
+    a.merging = b.merging = true;
+    mergeQueue.push([a, b]);
+    return;
+  }
+  const p = a.kind === 'power' ? a : b;
+  const other = p === a ? b : a;
+  if (p.triggered) return;
+  if (p.power === 'wildcard' && (other.kind !== 'shape' || other.merging)) return; // Wildcard needs a real shape
+  p.triggered = true;
+  powerQueue.push({ power: p, other });
+}
+
+// Keeps track of combos (merges that happen quickly one after another)
+function bumpCombo() {
+  comboCount = comboTimer > 0 ? comboCount + 1 : 1;
+  comboTimer = COMBO_WINDOW;
+  bestCombo = Math.max(bestCombo, comboCount);
+  mergesCount++;
+  return Math.min(MAX_COMBO_MULTIPLIER, 1 + (comboCount - 1) * COMBO_BONUS);   // points multiplier
+}
+
+// Turns each pair of matching shapes into the next shape up
+function processMerges() {
+  const born = [];
+  for (const [a, b] of mergeQueue) {
+    if (a.dead || b.dead) continue;
+    a.dead = b.dead = true;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const mult = bumpCombo();
+
+    if (a.tier < LAST) {
+      // A normal merge: make the next shape in the chain
+      const tier = a.tier + 1;
+      const nb = createBody({ kind: 'shape', tier, color: a.color }, mx, my);
+      nb.vx = (a.vx + b.vx) / 2;
+      nb.vy = (a.vy + b.vy) / 2 - 60;   // a little hop
+      nb.physFrom = a.baseR / nb.baseR; // grows from the old size...
+      nb.popFrom = 0.45;                // ...with a springy "boing"
+      nb.anim = 0;
+      nb.glitch = FX >= 2 ? GLITCH_TIME : 0;
+      nb.happy = 1.2;
+      nb.angle = rand(-0.3, 0.3);
+      nb.age = Math.max(a.age, b.age);
+      born.push(nb);
+
+      // The two old shapes explode, and their pieces get sucked into the new one
+      shatter(a, nb);
+      shatter(b, nb);
+      mergeBurst(nb, tier, colorOf(tier, a.color));
+      const pts = Math.round(SHAPE_CHAIN[tier].points * mult);
+      addScore(pts, mx, my - nb.baseR * 0.6);
+      if (comboCount >= 2) floatText(mx, my - nb.baseR - 22, `COMBO x${comboCount}!`, 18 + comboCount * 2, '#f5ff1f');
+      sounds.merge(tier, comboCount);
+      if (tier >= 6) { slowMo = 0.35; screenGlitch = 0.3; }
+      reachTier(tier);
+    } else {
+      // Two Suns: SUPERNOVA! They vanish for a huge bonus.
+      shatter(a, null, 1.6);
+      shatter(b, null, 1.6);
+      supernovaBurst(mx, my, colorOf(a.tier, a.color));
+      const pts = Math.round(MAX_MERGE_BONUS * mult);
+      addScore(pts, mx, my);
+      showBanner('SUPERNOVA!', `+${pts} bonus`, '#f5ff1f');
+      sounds.supernova();
+      slowMo = 0.6;
+      screenGlitch = 0.45;
+    }
+  }
+  mergeQueue = [];
+  bodies.push(...born);
+}
+
+// Sets off power-ups that touched something
+function processPowers() {
+  for (const { power: p, other } of powerQueue) {
+    if (p.dead) continue;
+
+    if (p.power === 'bomb') {
+      explode(p, other);
+
+    } else if (p.power === 'expand') {
+      p.dead = true;
+      if (expansions < MAX_EXPANSIONS) {
+        expansions++;
+        targetContainerWidth += CONTAINER_EXPAND_AMOUNT;
+      }
+      popPower(p, '#34e89e');
+      wallSparkles();
+      showBanner('BIGGER BOX!', 'more room to play', '#34e89e');
+      sounds.expand();
+
+    } else if (p.power === 'shake') {
+      p.dead = true;
+      popPower(p, '#ff9f1c');
+      for (const b of bodies) {
+        if (b.dead || b === p) continue;
+        unstick(b);                                 // the jolt knocks all goo loose
+        const k = Math.sqrt(30 / b.baseR);          // small shapes jump higher
+        b.vx += rand(-260, 260) * k;
+        b.vy -= rand(250, 520) * k;
+        b.squash = 0.2;
+      }
+      shake = Math.max(shake, 12);
+      showBanner('SHAKE UP!', 'the pile gets jolted', '#ff9f1c');
+      sounds.shake();
+
+    } else if (p.power === 'wildcard') {
+      if (!other || other.dead || other.merging) { p.triggered = false; continue; } // try again later
+      p.dead = true;
+      popPower(p, '#ffffff');
+      const mult = bumpCombo();
+      if (other.tier < LAST) {
+        // Upgrade the touched shape to the next one up, right where it is
+        unstick(other, true);                 // the upgrade cleans off any goo
+        const ghost = { ...other };           // a copy of the old shape, to shatter
+        other.tier++;
+        const oldR = other.baseR;
+        other.baseR = SHAPE_CHAIN[other.tier].radius;
+        other.physFrom = oldR / other.baseR;
+        other.popFrom = 0.5;
+        other.anim = 0;
+        other.glitch = FX >= 2 ? GLITCH_TIME : 0;
+        other.happy = 1.2;
+        shatter(ghost, other);
+        mergeBurst(other, other.tier, colorOf(other.tier, other.color));
+        addScore(Math.round(SHAPE_CHAIN[other.tier].points * mult), other.x, other.y - other.baseR * 0.6);
+        floatText(other.x, other.y - other.baseR - 22, 'WILD!', 22, '#ffffff');
+        sounds.merge(other.tier, comboCount);
+        reachTier(other.tier);
+      } else {
+        other.dead = true;
+        shatter(other, null, 1.6);
+        supernovaBurst(other.x, other.y, colorOf(other.tier, other.color));
+        addScore(Math.round(MAX_MERGE_BONUS * mult), other.x, other.y);
+        showBanner('SUPERNOVA!', 'wildcard bonus', '#f5ff1f');
+        sounds.supernova();
+        slowMo = 0.6;
+      }
+    }
+  }
+  powerQueue = [];
+}
+
+// Bomb: removes the shape it hit plus anything close by, and shoves the rest away
+function explode(p, hit) {
+  p.dead = true;
+  for (const b of bodies) {
+    if (b === p || b.dead) continue;
+    const dx = b.x - p.x, dy = b.y - p.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (b === hit || d - b.r < BOMB_RADIUS) {
+      b.dead = true;
+      shatter(b, null, 1.5);
+    } else if (d < BOMB_RADIUS * 3) {
+      const strength = 750 * (1 - d / (BOMB_RADIUS * 3));
+      b.vx += (dx / d) * strength;
+      b.vy += (dy / d) * strength;
+      b.squash = 0.2;
+    }
+  }
+  bombBurst(p.x, p.y);
+  showBanner('BOOM!', '', '#ff9f43');
+  shake = Math.max(shake, 16);
+  screenGlitch = 0.2;
+  slowMo = 0.2;
+  sounds.bomb();
+}
+
+
+/* =====================================================================
+   G. EYE CANDY - every visual effect lives in the "fx" list.
+   Each effect has a "type" that decides how it moves and looks.
+   ===================================================================== */
+
+// Adds an effect (and throws away the oldest ones if there are too many)
+function addFx(e) {
+  fx.push(e);
+  if (fx.length > 1000) fx.splice(0, fx.length - 1000);
+}
+
+// Breaks a shape into wedge-shaped shards that burst outward.
+// If "home" is given, most shards get sucked back into that new shape.
+function shatter(b, home, power = 1) {
+  if (b.kind !== 'shape') { popPower(b, '#ffffff'); return; }
+  const color = colorOf(b.tier, b.color);
+  if (FX === 0) { sparks(b.x, b.y, color, 8, 250); return; }
+
+  // Add in-between points so even a triangle breaks into plenty of pieces
+  let outline = OUTLINES[b.tier];
+  while (outline.length < 9) {
+    const more = [];
+    outline.forEach((p, i) => {
+      const q = outline[(i + 1) % outline.length];
+      more.push(p, [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]);
+    });
+    outline = more;
+  }
+  const n = outline.length;
+  const step = Math.max(1, Math.round(n / (FX >= 2 ? 10 : 6)));
+
+  for (let i = 0; i < n; i += step) {
+    // A wedge from the center out to a slice of the edge
+    const pts = [[0, 0]];
+    for (let k = 0; k <= step; k++) {
+      const p = outline[(i + k) % n];
+      pts.push(rotatePoint(p[0] * b.r, p[1] * b.r, b.angle));
+    }
+    const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+    const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+    const d = Math.hypot(cx, cy) || 1;
+    const speed = rand(200, 460) * power;
+    addFx({
+      type: 'shard',
+      x: b.x + cx, y: b.y + cy,
+      vx: cx / d * speed + b.vx * 0.3,
+      vy: cy / d * speed + b.vy * 0.3 - 80,
+      a: 0, va: rand(-14, 14),
+      pts: pts.map(p => [p[0] - cx, p[1] - cy]),
+      color,
+      t: 0,
+      homeAt: rand(0.12, 0.26),                            // when the suction starts
+      home: home && Math.random() < 0.72 ? home : null,    // most pieces fly home
+      scale: 1,
+    });
+  }
+
+  // Tiny copies of the shape itself go flying like confetti
+  const minis = FX >= 2 ? 5 : 2;
+  for (let i = 0; i < minis; i++) {
+    const a = rand(0, TAU), s = rand(150, 380) * power;
+    addFx({ type: 'mini', tier: b.tier, color, x: b.x, y: b.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 200,
+            a: rand(0, TAU), va: rand(-10, 10), r: Math.max(4, b.baseR * rand(0.16, 0.26)), t: 0, life: rand(0.9, 1.4) });
+  }
+}
+
+// The celebration around a newly born shape
+function mergeBurst(nb, tier, color) {
+  const r = nb.baseR;
+  addFx({ type: 'flash', x: nb.x, y: nb.y, r: r * 2.4, color, t: 0, dur: 0.28 });
+  if (FX >= 1) addFx({ type: 'bubble', follow: nb, x: nb.x, y: nb.y, r0: r * 0.95, r1: r * 1.55, t: 0, dur: 0.3, hue: rand(0, 360) });
+  addFx({ type: 'ring', x: nb.x, y: nb.y, r: r * 0.8, r1: r * 2.3, color, t: 0, dur: 0.45, width: 5 });
+  sparks(nb.x, nb.y, tint(color, 0.5), 8 + tier * 2, 260 + tier * 30);
+  if (tier >= 4) shake = Math.max(shake, tier * 1.1);
+  nb.squash = -0.15;   // stretch tall as it's born
+}
+
+// Soap-bubble droplets flying off a popped bubble
+function bubbleDroplets(x, y, r, count, hue) {
+  for (let i = 0; i < count; i++) {
+    const a = i / count * TAU + rand(-0.2, 0.2);
+    const s = rand(120, 260);
+    addFx({ type: 'drop', x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+            r: rand(1.5, 4), hue: hue + i * 25, t: 0, life: rand(0.4, 0.75) });
+  }
+  addFx({ type: 'poplines', x, y, r, t: 0, dur: 0.16 });
+}
+
+// Streaky sparks that fly out from a point
+function sparks(x, y, color, count, speed) {
+  for (let i = 0; i < count; i++) {
+    const a = rand(0, TAU), s = speed * rand(0.4, 1);
+    addFx({ type: 'spark', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, color, t: 0, life: rand(0.3, 0.6) });
+  }
+}
+
+// A power-up orb bursting open
+function popPower(p, color) {
+  addFx({ type: 'flash', x: p.x, y: p.y, r: 70, color, t: 0, dur: 0.3 });
+  addFx({ type: 'ring', x: p.x, y: p.y, r: 10, r1: 80, color, t: 0, dur: 0.4, width: 4 });
+  sparks(p.x, p.y, color, 22, 380);
+  if (FX >= 1) bubbleDroplets(p.x, p.y, p.r, 12, rand(0, 360));
+}
+
+function bombBurst(x, y) {
+  addFx({ type: 'flash', x, y, r: BOMB_RADIUS * 3, color: '#ff9f43', t: 0, dur: 0.4 });
+  addFx({ type: 'ring', x, y, r: 10, r1: BOMB_RADIUS * 2.2, color: '#f5ff1f', t: 0, dur: 0.45, width: 8 });
+  addFx({ type: 'ring', x, y, r: 10, r1: BOMB_RADIUS * 1.5, color: '#ff5c3a', t: 0, dur: 0.6, width: 4 });
+  sparks(x, y, '#f5ff1f', 40, 600);
+  sparks(x, y, '#ff7b00', 30, 420);
+  for (let i = 0; i < 10; i++) {        // puffs of smoke
+    const a = rand(0, TAU);
+    addFx({ type: 'puff', x: x + Math.cos(a) * 20, y: y + Math.sin(a) * 20, vx: Math.cos(a) * 60, vy: Math.sin(a) * 60 - 30,
+            r: rand(14, 26), t: 0, life: rand(0.6, 1) });
+  }
+}
+
+function supernovaBurst(x, y, color) {
+  addFx({ type: 'flash', x, y, r: 320, color: '#ffffff', t: 0, dur: 0.6 });
+  for (let i = 0; i < 3; i++) addFx({ type: 'ring', x, y, r: 20, r1: 180 + i * 90, color: i === 1 ? color : '#f5ff1f', t: -i * 0.08, dur: 0.7, width: 8 - i * 2 });
+  addFx({ type: 'bubble', follow: null, x, y, r0: 90, r1: 170, t: 0, dur: 0.45, hue: rand(0, 360) });
+  sparks(x, y, '#f5ff1f', 60, 700);
+  sparks(x, y, tint(color, 0.4), 40, 500);
+  shake = Math.max(shake, 18);
+}
+
+function wallSparkles() {
+  for (let i = 0; i < 24; i++) {
+    const side = i % 2 ? -1 : 1;
+    const x = CENTER_X + side * targetContainerWidth / 2;
+    sparks(x, rand(CONTAINER_TOP, FLOOR_Y), '#34e89e', 1, 200);
+  }
+}
+
+// Floating "+10" and "COMBO" texts (they live inside the game world)
+function floatText(x, y, text, size, color) {
+  addFx({ type: 'text', x, y, text, size, color, t: 0, dur: 1.1 });
+}
+
+// A big message across the top of the game
+function showBanner(text, sub, color) {
+  banner = { text, sub, color, t: 0, dur: 1.5 };
+}
+
+// Moves every effect forward in time
+function updateFx(dt) {
+  for (const e of fx) {
+    e.t += dt;
+    switch (e.type) {
+      case 'shard': {
+        e.a += e.va * dt;
+        const homing = e.home && !e.home.dead && e.t > e.homeAt;
+        if (homing) {
+          // Suction! Pulled toward the new shape and shrinking as it arrives
+          const k = Math.min(1, dt * (8 + (e.t - e.homeAt) * 40));
+          e.x += (e.home.x - e.x) * k;
+          e.y += (e.home.y - e.y) * k;
+          e.scale *= Math.pow(0.08, dt);
+          if (Math.hypot(e.home.x - e.x, e.home.y - e.y) < e.home.r * 0.3 || e.scale < 0.25) e.done = true;
+        } else {
+          const drag = Math.pow(e.home ? 0.02 : 0.4, dt);   // homing shards brake hard first
+          e.vx *= drag; e.vy *= drag;
+          e.vy += (e.home ? 200 : 900) * dt;
+          e.x += e.vx * dt; e.y += e.vy * dt;
+          if (!e.home) e.scale = Math.max(0, 1 - e.t / 1.1);
+          if (e.t > 1.1 || (e.home && e.home.dead)) e.done = true;
+        }
+        break;
+      }
+      case 'mini':
+        e.vy += 900 * dt;
+        e.x += e.vx * dt; e.y += e.vy * dt;
+        e.a += e.va * dt;
+        if (e.y + e.r > FLOOR_Y && e.vy > 0) { e.y = FLOOR_Y - e.r; e.vy *= -0.5; e.vx *= 0.7; } // bounce off the floor
+        if (e.t > e.life) e.done = true;
+        break;
+      case 'bubble':
+        if (e.follow && !e.follow.dead) { e.x = e.follow.x; e.y = e.follow.y; }
+        if (e.t >= e.dur) {        // POP!
+          e.done = true;
+          bubbleDroplets(e.x, e.y, e.r1, FX >= 2 ? 18 : 10, e.hue);
+          sounds.bubble();
+        }
+        break;
+      case 'drop':
+        e.vx *= Math.pow(0.3, dt); e.vy *= Math.pow(0.3, dt);
+        e.vy += 350 * dt;
+        e.x += e.vx * dt; e.y += e.vy * dt;
+        if (e.t > e.life) e.done = true;
+        break;
+      case 'spark':
+        e.vx *= Math.pow(0.1, dt); e.vy *= Math.pow(0.1, dt);
+        e.vy += 300 * dt;
+        e.x += e.vx * dt; e.y += e.vy * dt;
+        if (e.t > e.life) e.done = true;
+        break;
+      case 'puff':
+        e.x += e.vx * dt; e.y += e.vy * dt;
+        e.vx *= Math.pow(0.2, dt); e.vy *= Math.pow(0.2, dt);
+        if (e.t > e.life) e.done = true;
+        break;
+      case 'text':
+        e.y -= 45 * dt;
+        if (e.t > e.dur) e.done = true;
+        break;
+      default:   // flash, ring, poplines just run out of time
+        if (e.t > e.dur) e.done = true;
+    }
+  }
+  fx = fx.filter(e => !e.done);
+
+  if (banner) { banner.t += dt; if (banner.t > banner.dur) banner = null; }
+  shake *= Math.pow(0.015, dt);
+  screenGlitch = Math.max(0, screenGlitch - dt);
+
+  for (const f of floaters) {              // background shapes drift upward
+    f.y -= f.vy * dt;
+    f.a += f.va * dt;
+    if (f.y < -60) { f.y = H + 60; f.x = rand(0, W); }
+  }
+}
+
+// Draws every effect
+function drawFx(c) {
+  for (const e of fx) {
+    switch (e.type) {
+      case 'shard': {
+        c.save();
+        c.globalAlpha = e.home ? 1 : Math.min(1, e.scale * 1.5);
+        c.translate(e.x, e.y);
+        c.rotate(e.a);
+        c.scale(e.scale, e.scale);
+        c.beginPath();
+        c.moveTo(e.pts[0][0], e.pts[0][1]);
+        for (let i = 1; i < e.pts.length; i++) c.lineTo(e.pts[i][0], e.pts[i][1]);
+        c.closePath();
+        c.fillStyle = withAlpha(e.color, 0.45);
+        c.fill();
+        c.globalCompositeOperation = 'lighter';
+        c.lineJoin = 'round';
+        c.lineWidth = 5;
+        c.strokeStyle = withAlpha(e.color, 0.25);
+        c.stroke();
+        c.lineWidth = 1.6;
+        c.strokeStyle = tint(e.color, 0.6);
+        c.stroke();
+        c.restore();
+        break;
+      }
+      case 'mini':
+        c.save();
+        c.globalAlpha = clamp((e.life - e.t) * 3, 0, 1);
+        drawShape(c, e.tier, e.x, e.y, e.r, e.a, e.color, { face: false });
+        c.restore();
+        break;
+      case 'bubble': {
+        // A wobbly soap bubble with a rainbow rim
+        const p = clamp(e.t / e.dur, 0, 1);
+        const r = e.r0 + (e.r1 - e.r0) * easeOutCubic(p);
+        const wob = Math.sin(e.t * 45) * 0.05;
+        c.save();
+        c.translate(e.x, e.y);
+        c.scale(1 + wob, 1 - wob);
+        const fill = c.createRadialGradient(0, 0, r * 0.6, 0, 0, r);
+        fill.addColorStop(0, 'rgba(255,255,255,0)');
+        fill.addColorStop(1, 'rgba(255,255,255,0.16)');
+        c.fillStyle = fill;
+        c.beginPath(); c.arc(0, 0, r, 0, TAU); c.fill();
+        if (c.createConicGradient) {
+          const rim = c.createConicGradient(e.t * 4 + e.hue, 0, 0);
+          for (let i = 0; i <= 6; i++) rim.addColorStop(i / 6, `hsla(${e.hue + i * 60}, 100%, 72%, 0.85)`);
+          c.strokeStyle = rim;
+        } else {
+          c.strokeStyle = `hsla(${e.hue}, 100%, 75%, 0.8)`;
+        }
+        c.lineWidth = 2.5;
+        c.stroke();
+        c.strokeStyle = 'rgba(255,255,255,0.8)';     // shiny window reflection
+        c.lineWidth = 3;
+        c.lineCap = 'round';
+        c.beginPath(); c.arc(0, 0, r * 0.78, Math.PI * 1.1, Math.PI * 1.4); c.stroke();
+        c.fillStyle = 'rgba(255,255,255,0.9)';
+        c.beginPath(); c.arc(-r * 0.3, -r * 0.62, 2.5, 0, TAU); c.fill();
+        c.restore();
+        break;
+      }
+      case 'drop': {
+        c.globalAlpha = clamp(1 - e.t / e.life, 0, 1);
+        c.strokeStyle = `hsl(${e.hue}, 100%, 75%)`;
+        c.lineWidth = 1.2;
+        c.beginPath(); c.arc(e.x, e.y, e.r, 0, TAU); c.stroke();
+        c.fillStyle = '#fff';
+        c.beginPath(); c.arc(e.x - e.r * 0.35, e.y - e.r * 0.35, e.r * 0.35, 0, TAU); c.fill();
+        c.globalAlpha = 1;
+        break;
+      }
+      case 'poplines': {
+        // Comic-book "pop" marks
+        const p = e.t / e.dur;
+        c.strokeStyle = `rgba(255,255,255,${1 - p})`;
+        c.lineWidth = 2.5;
+        c.lineCap = 'round';
+        for (let i = 0; i < 8; i++) {
+          const a = i / 8 * TAU + 0.2;
+          const r1 = e.r * (1.05 + p * 0.3), r2 = e.r * (1.25 + p * 0.45);
+          c.beginPath();
+          c.moveTo(e.x + Math.cos(a) * r1, e.y + Math.sin(a) * r1);
+          c.lineTo(e.x + Math.cos(a) * r2, e.y + Math.sin(a) * r2);
+          c.stroke();
+        }
+        break;
+      }
+      case 'spark': {
+        c.save();
+        c.globalCompositeOperation = 'lighter';
+        c.globalAlpha = clamp(1 - e.t / e.life, 0, 1);
+        c.strokeStyle = e.color;
+        c.lineWidth = 2.5;
+        c.lineCap = 'round';
+        c.beginPath();
+        c.moveTo(e.x, e.y);
+        c.lineTo(e.x - e.vx * 0.04, e.y - e.vy * 0.04);
+        c.stroke();
+        c.restore();
+        break;
+      }
+      case 'flash': {
+        const p = e.t / e.dur;
+        c.save();
+        c.globalCompositeOperation = 'lighter';
+        const g = c.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * (0.6 + p * 0.4));
+        g.addColorStop(0, `rgba(255,255,255,${0.7 * (1 - p)})`);
+        g.addColorStop(0.4, e.color);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        c.globalAlpha = 0.5 * (1 - p);
+        c.fillStyle = g;
+        c.beginPath(); c.arc(e.x, e.y, e.r, 0, TAU); c.fill();
+        c.restore();
+        break;
+      }
+      case 'ring': {
+        if (e.t < 0) break;
+        const p = clamp(e.t / e.dur, 0, 1);
+        c.globalAlpha = 1 - p;
+        c.strokeStyle = e.color;
+        c.lineWidth = e.width * (1 - p) + 0.5;
+        c.beginPath(); c.arc(e.x, e.y, e.r + (e.r1 - e.r) * easeOutCubic(p), 0, TAU); c.stroke();
+        c.globalAlpha = 1;
+        break;
+      }
+      case 'puff': {
+        const p = e.t / e.life;
+        c.fillStyle = `rgba(90, 80, 120, ${0.45 * (1 - p)})`;
+        c.beginPath(); c.arc(e.x, e.y, e.r * (1 + p), 0, TAU); c.fill();
+        break;
+      }
+      case 'text': {
+        const p = e.t / e.dur;
+        const s = e.t < 0.18 ? easeOutBack(e.t / 0.18) : 1;
+        c.save();
+        c.globalAlpha = p > 0.65 ? (1 - p) / 0.35 : 1;
+        c.translate(e.x, e.y);
+        c.scale(s, s);
+        c.font = `${e.size}px ${DISPLAY_FONT}`;
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.lineWidth = 5;
+        c.lineJoin = 'round';
+        c.strokeStyle = 'rgba(20, 10, 40, 0.8)';
+        c.strokeText(e.text, 0, 0);
+        c.fillStyle = e.color;
+        c.fillText(e.text, 0, 0);
+        c.restore();
+        break;
+      }
+    }
+  }
+}
+
+
+/* =====================================================================
+   H. GAME FLOW - picking shapes, dropping, scoring, game over
+   ===================================================================== */
+
+// Picks the next thing to drop: usually a small shape, sometimes a power-up
+function makeRandomItem() {
+  if (dropsCount >= POWERUP_SAFE_DROPS && !lastWasPower && Math.random() < POWERUP_CHANCE) {
+    const type = pickPowerType();
+    if (type) { lastWasPower = true; return { kind: 'power', power: type }; }
+  }
+  lastWasPower = false;
+  return {
+    kind: 'shape',
+    tier: Math.floor(Math.random() * DROPPABLE_TIERS),
+    color: colorMode ? Math.floor(Math.random() * NUM_COLORS) : null,
+    sticky: dropsCount >= STICKY_SAFE_DROPS && Math.random() < STICKY_CHANCE,
+  };
+}
+
+// Chooses which power-up, using the weights in SETTINGS
+function pickPowerType() {
+  const options = Object.keys(POWERUPS).filter(k =>
+    POWERUPS[k].enabled && !(k === 'expand' && expansions >= MAX_EXPANSIONS));
+  let roll = Math.random() * options.reduce((sum, k) => sum + POWERUPS[k].weight, 0);
+  for (const k of options) {
+    roll -= POWERUPS[k].weight;
+    if (roll <= 0) return k;
+  }
+  return null;
+}
+
+// Keeps the held shape between the walls
+function clampHeldX() {
+  const r = currentItem ? itemRadius(currentItem) : 10;
+  heldX = clamp(heldX, CENTER_X - containerWidth / 2 + r, CENTER_X + containerWidth / 2 - r);
+}
+
+// Drop the held shape into the box
+function drop() {
+  if (state !== 'playing' || dropCooldown > 0 || !currentItem) return;
+  clampHeldX();
+  const b = createBody(currentItem, heldX, DROP_Y);
+  b.angle = rand(-0.2, 0.2);
+  b.squash = -0.12;          // stretch as it falls
+  bodies.push(b);
+  currentItem = null;
+  dropCooldown = DROP_COOLDOWN;
+  dropsCount++;
+  sounds.drop();
+}
+
+function addScore(points, x, y) {
+  score += points;
+  floatText(x, y, '+' + points, 18 + Math.min(points, 60) * 0.35, '#ffffff');
+  const el = document.getElementById('score');
+  el.classList.remove('bump');
+  void el.offsetWidth;       // restarts the CSS animation
+  el.classList.add('bump');
+  if (score > highScore) {
+    highScore = score;
+    document.getElementById('best').textContent = highScore;
+    saveHighScore();
+  }
+}
+
+// The first time you make a shape, it gets a banner and lights up in the key
+function reachTier(tier) {
+  if (tier <= maxTierReached) return;
+  maxTierReached = tier;
+  if (tier >= 4) showBanner('NEW SHAPE!', SHAPE_CHAIN[tier].name, SHAPE_CHAIN[tier].color);
+  buildKey(true);
+}
+
+// High scores are saved in this browser (one for each mode)
+function highScoreKey() { return 'shapeDrop2_best_' + (colorMode ? 'color' : 'classic'); }
+function loadHighScore() {
+  try { highScore = parseInt(localStorage.getItem(highScoreKey()), 10) || 0; } catch (e) { highScore = 0; }
+  document.getElementById('best').textContent = highScore;
+  document.getElementById('bestModeName').textContent = colorMode ? 'color' : 'classic';
+}
+function saveHighScore() {
+  try { localStorage.setItem(highScoreKey(), highScore); } catch (e) { /* storage blocked - that's fine */ }
+}
+
+// Runs every frame while playing
+function updateGame(dt) {
+  if (keysDown['ArrowLeft'] || keysDown['a']) heldX -= KEY_MOVE_SPEED * dt;
+  if (keysDown['ArrowRight'] || keysDown['d']) heldX += KEY_MOVE_SPEED * dt;
+
+  // When the cooldown ends, the Next shape becomes the one you hold
+  if (dropCooldown > 0) {
+    dropCooldown -= dt;
+    if (dropCooldown <= 0 && !currentItem) {
+      currentItem = nextItem;
+      nextItem = makeRandomItem();
+      drawNextPreview();
+    }
+  }
+  clampHeldX();
+
+  comboTimer -= dt;
+  if (comboTimer <= 0) comboCount = 0;
+
+  // Faces: blinking, happy and glitch timers. Power-ups leave a sparkly trail.
+  for (const b of bodies) {
+    b.glitch = Math.max(0, b.glitch - dt);
+    b.happy -= dt;
+    b.blink -= dt;
+    if (b.blink < -0.12) b.blink = rand(2, 6);
+    if (b.sticky > 0 && b.gooActive) {        // goo slowly dries once it has landed
+      b.sticky -= dt;
+      if (b.sticky <= 0) unstick(b);
+    }
+    if (b.kind === 'power' && Math.random() < dt * 25) sparks(b.x + rand(-8, 8), b.y + rand(-8, 8), '#ffffff', 1, 60);
+  }
+
+  // Game over check: a settled shape poking above the red line for too long
+  danger = false;
+  for (const b of bodies) {
+    if (b.age > 1 && b.y - b.r < CONTAINER_TOP) {
+      b.overTime += dt;
+      danger = true;
+      if (b.overTime > GAME_OVER_DELAY) { gameOver(); return; }
+    } else {
+      b.overTime = 0;
+    }
+  }
+  if (danger) {
+    dangerTick -= dt;
+    if (dangerTick <= 0) { sounds.tick(); dangerTick = 0.4; }
+  }
+}
+
+// Game over: every shape pops one by one (top to bottom), then the score screen
+function gameOver() {
+  state = 'ending';
+  sounds.over();
+  endingQueue = bodies.slice().sort((a, b) => a.y - b.y);
+  endingTimer = 0.5;
+  showBanner('GAME OVER', '', '#ff5c9a');
+}
+
+function updateEnding(dt) {
+  endingTimer -= dt;
+  if (endingTimer > 0) return;
+  if (endingQueue.length) {
+    const b = endingQueue.shift();
+    b.dead = true;
+    shatter(b, null, 0.9);
+    if (FX >= 1) addFx({ type: 'bubble', follow: null, x: b.x, y: b.y, r0: b.r * 0.9, r1: b.r * 1.3, t: 0, dur: 0.18, hue: rand(0, 360) });
+    tone(noteFreq(Math.min(12, bodies.length - endingQueue.length)), 0.1, { type: 'triangle', vol: 0.08 });
+    bodies = bodies.filter(x => !x.dead);
+    endingTimer = bodies.length > 20 ? 0.045 : 0.09;
+  } else {
+    state = 'over';
+    showGameOverScreen();
+  }
+}
+
+function showGameOverScreen() {
+  const isNewBest = score > 0 && score >= highScore;
+  saveHighScore();
+  document.getElementById('finalScore').textContent = score;
+  document.getElementById('newBest').hidden = !isNewBest;
+  document.getElementById('endShapeName').textContent = SHAPE_CHAIN[maxTierReached].name;
+  document.getElementById('endMerges').textContent = mergesCount;
+  document.getElementById('endCombo').textContent = 'x' + bestCombo;
+  const cx = prepSmallCanvas(document.getElementById('endShape'), 56);
+  drawShape(cx, maxTierReached, 28, 28, 18, 0, SHAPE_CHAIN[maxTierReached].color, { mood: 'happy' });
+  document.getElementById('overlay').hidden = false;
+}
+
+// Start a fresh game
+function restart() {
+  bodies = []; fx = []; mergeQueue = []; powerQueue = []; endingQueue = [];
+  score = 0; shownScore = 0;
+  document.getElementById('score').textContent = '0';
+  containerWidth = targetContainerWidth = CONTAINER_START_WIDTH;
+  camZoom = 1;
+  expansions = 0;
+  dropsCount = 0;
+  dropCooldown = 0;
+  lastWasPower = false;
+  maxTierReached = 0;
+  comboCount = 0; comboTimer = 0; bestCombo = 1; mergesCount = 0;
+  shake = 0; screenGlitch = 0; slowMo = 0; banner = null; danger = false;
+  currentItem = makeRandomItem();
+  nextItem = makeRandomItem();
+  loadHighScore();
+  buildKey(false);
+  drawNextPreview();
+  document.getElementById('overlay').hidden = true;
+  state = 'playing';
+}
+
+
+/* =====================================================================
+   I. DRAWING THE GAME (every frame)
+   ===================================================================== */
+
+// Camera: zooms out around the middle of the floor when the box gets wider
+function applyCamera(c) {
+  c.translate(CENTER_X, FLOOR_Y);
+  c.scale(camZoom, camZoom);
+  c.translate(-CENTER_X, -FLOOR_Y);
+}
+function screenToWorldX(sx) { return CENTER_X + (sx - CENTER_X) / camZoom; }
+
+// Where would the held shape land if dropped right now? (for the ghost preview)
+function landingY(x, r) {
+  let y = FLOOR_Y - r;
+  for (const b of bodies) {
+    const dx = Math.abs(b.x - x), reach = b.r + r;
+    if (dx < reach) y = Math.min(y, b.y - Math.sqrt(reach * reach - dx * dx));
+  }
+  return Math.max(y, DROP_Y);
+}
+
+function render() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  // Background with drifting shape outlines
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#0a0518');
+  bg.addColorStop(1, '#05030c');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  // Faint neon grid that slowly scrolls
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(255, 43, 214, 0.07)';
+  const gridStep = 32, gridShift = (gameTime * 12) % gridStep;
+  ctx.beginPath();
+  for (let gy = gridShift; gy < H; gy += gridStep) { ctx.moveTo(0, gy); ctx.lineTo(W, gy); }
+  for (let gx = (W / 2) % gridStep; gx < W; gx += gridStep) { ctx.moveTo(gx, 0); ctx.lineTo(gx, H); }
+  ctx.stroke();
+  for (const f of floaters) {
+    ctx.globalAlpha = f.alpha;
+    drawSilhouette(ctx, f.tier, f.x, f.y, f.r, f.a, SHAPE_CHAIN[f.tier].color, true);
+  }
+  ctx.globalAlpha = 1;
+
+  if (hudInCanvas) drawHud();
+
+  ctx.save();
+  if (SCREEN_SHAKE && shake > 0.3 && !REDUCED_MOTION) {
+    ctx.translate(Math.sin(gameTime * 73) * shake, Math.cos(gameTime * 61) * shake * 0.7);
+  }
+  applyCamera(ctx);
+
+  const left = CENTER_X - containerWidth / 2;
+  const right = CENTER_X + containerWidth / 2;
+
+  // Glass box
+  const glass = ctx.createLinearGradient(0, CONTAINER_TOP, 0, FLOOR_Y);
+  glass.addColorStop(0, 'rgba(0, 240, 255, 0.015)');
+  glass.addColorStop(1, 'rgba(0, 240, 255, 0.07)');
+  ctx.fillStyle = glass;
+  ctx.fillRect(left, CONTAINER_TOP, containerWidth, FLOOR_Y - CONTAINER_TOP);
+
+  // Aim: a soft beam plus a ghost outline where the shape will land
+  if (currentItem && state === 'playing') {
+    const r = itemRadius(currentItem);
+    const ly = landingY(heldX, r);
+    const col = currentItem.kind === 'shape' ? colorOf(currentItem.tier, currentItem.color) : '#ffffff';
+    const beam = ctx.createLinearGradient(0, DROP_Y, 0, ly);
+    beam.addColorStop(0, 'rgba(255,255,255,0.10)');
+    beam.addColorStop(1, 'rgba(255,255,255,0.02)');
+    ctx.fillStyle = beam;
+    ctx.fillRect(heldX - r * 0.6, DROP_Y, r * 1.2, ly - DROP_Y);
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.globalAlpha = 0.55;
+    if (currentItem.kind === 'shape') drawSilhouette(ctx, currentItem.tier, heldX, ly, r, 0, col, true);
+    else { ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(heldX, ly, r, 0, TAU); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  // Every shape and power-up in the box
+  for (const b of bodies) if (b.links.length) drawGooStrands(ctx, b);
+  for (const b of bodies) {
+    drawBody(ctx, b);
+    if (b.sticky > 0) {
+      // Goo blinks during its last 2 seconds, so you know it's about to dry
+      const fading = b.gooActive && b.sticky < 2 && Math.sin(gameTime * 20) < 0;
+      drawGoo(ctx, b.x, b.y, b.r, gameTime + b.id, fading ? 0.35 : 1);
+    }
+  }
+
+  // Red countdown rings around shapes that are over the line
+  for (const b of bodies) {
+    if (b.overTime <= 0) continue;
+    const p = b.overTime / GAME_OVER_DELAY;
+    ctx.strokeStyle = `rgba(255, 60, 90, ${0.6 + Math.sin(gameTime * 20) * 0.3})`;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r + 7, -Math.PI / 2, -Math.PI / 2 + p * TAU);
+    ctx.stroke();
+  }
+
+  drawFx(ctx);
+
+  // Walls and floor (drawn on top so shapes look like they're inside the glass)
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  // A neon tube: wide soft glow, medium glow, bright white-hot core
+  ctx.beginPath();
+  ctx.moveTo(left - 3.5, CONTAINER_TOP - 14);
+  ctx.lineTo(left - 3.5, FLOOR_Y + 3.5);
+  ctx.lineTo(right + 3.5, FLOOR_Y + 3.5);
+  ctx.lineTo(right + 3.5, CONTAINER_TOP - 14);
+  const flicker = 0.9 + 0.1 * Math.sin(gameTime * 13) * Math.sin(gameTime * 7.3);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = `rgba(0, 240, 255, ${0.12 * flicker})`;
+  ctx.lineWidth = 22;
+  ctx.stroke();
+  ctx.strokeStyle = `rgba(0, 240, 255, ${0.35 * flicker})`;
+  ctx.lineWidth = 9;
+  ctx.stroke();
+  ctx.restore();
+  ctx.strokeStyle = '#b8fbff';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Danger line (glows and flashes when something is over it)
+  ctx.save();
+  ctx.setLineDash([12, 9]);
+  ctx.lineDashOffset = -gameTime * 30;
+  ctx.lineWidth = 3;
+  if (danger) {
+    ctx.shadowColor = '#ff3b5c';
+    ctx.shadowBlur = 16;
+    ctx.strokeStyle = Math.sin(gameTime * 18) > 0 ? '#ff3b5c' : '#ffb3c1';
+  } else {
+    ctx.strokeStyle = 'rgba(255, 92, 154, 0.45)';
+  }
+  ctx.beginPath();
+  ctx.moveTo(left, CONTAINER_TOP);
+  ctx.lineTo(right, CONTAINER_TOP);
+  ctx.stroke();
+  ctx.restore();
+
+  // The shape you're holding (bobs gently, eyes look down at the landing spot)
+  if (currentItem && state === 'playing') {
+    drawItem(ctx, currentItem, heldX, DROP_Y + Math.sin(gameTime * 3) * 2, 1, { x: 0, y: 1 });
+  }
+  ctx.restore();
+
+  drawBanner();
+
+  // A hint for brand-new players
+  if (dropsCount < 3 && state === 'playing') {
+    ctx.font = `15px ${DISPLAY_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText(IS_TOUCH ? 'Drag to aim · lift to drop' : 'Mouse or ← → to aim · click or Space to drop', W / 2, CONTAINER_TOP + 28);
+  }
+
+  if (state === 'paused') {
+    ctx.fillStyle = 'rgba(10, 6, 25, 0.65)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `46px ${DISPLAY_FONT}`;
+    ctx.fillText('PAUSED', W / 2, H / 2);
+    ctx.font = `16px ${DISPLAY_FONT}`;
+    ctx.fillText(IS_TOUCH ? 'Tap to keep playing' : 'Press P or click to keep playing', W / 2, H / 2 + 40);
+  }
+
+  // Full-screen glitch: slide random strips of the picture sideways (huge moments only)
+  if (screenGlitch > 0 && FX >= 2) {
+    const k = Math.min(1, screenGlitch / 0.3);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    for (let i = 0; i < 6; i++) {
+      const sy = Math.random() * canvas.height;
+      const sh = (4 + Math.random() * 26) * DPR;
+      const dx = (Math.random() - 0.5) * 50 * DPR * k;
+      ctx.drawImage(canvas, 0, sy, canvas.width, sh, dx, sy, canvas.width, sh);
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = `rgba(255, 40, 140, ${0.08 * k})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+}
+
+// Draws one body, including the birth "boing" and glitch flicker
+function drawBody(c, b) {
+  let vr = b.r;
+  if (b.popFrom < 1 && b.anim < POP_TIME) vr = b.baseR * (b.popFrom + (1 - b.popFrom) * easeOutElastic(b.anim / POP_TIME));
+  if (b.kind === 'power') { drawPowerUp(c, b.power, b.x, b.y, vr, gameTime); return; }
+
+  const color = colorOf(b.tier, b.color);
+  const opts = {
+    sx: 1 + b.squash, sy: 1 - b.squash,
+    look: { x: heldX - b.x, y: DROP_Y - b.y },
+    blink: b.blink < 0,
+    mood: b.overTime > 0 ? 'worried' : b.happy > 0 ? 'happy' : 'normal',
+  };
+
+  // The Sun has a warm, pulsing aura
+  if (b.tier === LAST) {
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    const g = c.createRadialGradient(b.x, b.y, vr * 0.8, b.x, b.y, vr * 1.7);
+    g.addColorStop(0, `rgba(255, 95, 210, ${0.28 + Math.sin(gameTime * 4) * 0.08})`);
+    g.addColorStop(1, 'rgba(255, 95, 210, 0)');
+    c.fillStyle = g;
+    c.beginPath(); c.arc(b.x, b.y, vr * 1.7, 0, TAU); c.fill();
+    c.restore();
+  }
+
+  if (b.glitch > 0) {
+    // Glitch flicker: red & cyan ghosts plus sliced, jittering stripes
+    const k = b.glitch / GLITCH_TIME;
+    const off = vr * 0.3 * k;
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = 0.75 * k;
+    drawSilhouette(c, b.tier, b.x + off, b.y, vr, b.angle, '#ff2d75');
+    drawSilhouette(c, b.tier, b.x - off, b.y + off * 0.3, vr, b.angle, '#27e8ff');
+    c.restore();
+    const bands = 5, top = b.y - vr * 1.4, h = (vr * 2.8) / bands;
+    for (let i = 0; i < bands; i++) {
+      const shift = Math.random() < 0.5 ? (Math.random() - 0.5) * vr * 0.7 * k : 0;
+      c.save();
+      c.beginPath();
+      c.rect(b.x - vr * 2, top + i * h, vr * 4, h + 0.5);
+      c.clip();
+      drawShape(c, b.tier, b.x + shift, b.y, vr, b.angle, color, opts);
+      c.restore();
+    }
+  } else {
+    drawShape(c, b.tier, b.x, b.y, vr, b.angle, color, opts);
+  }
+}
+
+// Phones: score in the top-left corner and the Next shape in the top-right
+function drawHud() {
+  ctx.save();
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'left';
+  ctx.font = `12px ${DISPLAY_FONT}`;
+  ctx.fillStyle = '#a99bd6';
+  ctx.fillText('SCORE', 12, 10);
+  ctx.font = `28px ${DISPLAY_FONT}`;
+  ctx.shadowColor = '#00f0ff';
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(String(shownScore), 12, 24);
+  ctx.shadowBlur = 0;
+  ctx.font = `12px ${DISPLAY_FONT}`;
+  ctx.fillStyle = '#f5ff1f';
+  ctx.fillText('BEST ' + highScore, 12, 56);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#a99bd6';
+  ctx.fillText('NEXT', W - 12, 10);
+  if (nextItem) drawItem(ctx, nextItem, W - 32, 50, Math.min(1, 17 / itemRadius(nextItem)));
+  ctx.restore();
+}
+
+// The big message across the top ("NEW SHAPE!", "BOOM!", ...)
+function drawBanner() {
+  if (!banner) return;
+  const p = banner.t / banner.dur;
+  const s = banner.t < 0.25 ? easeOutElastic(banner.t / 0.25) : 1;
+  ctx.save();
+  ctx.globalAlpha = p > 0.75 ? (1 - p) / 0.25 : 1;
+  ctx.translate(W / 2, CONTAINER_TOP + 70);
+  ctx.rotate(-0.05);
+  ctx.scale(s, s);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.font = `44px ${DISPLAY_FONT}`;
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = 'rgba(20, 10, 40, 0.9)';
+  ctx.strokeText(banner.text, 0, 0);
+  ctx.fillStyle = banner.color;
+  ctx.fillText(banner.text, 0, 0);
+  if (banner.sub) {
+    ctx.font = `20px ${DISPLAY_FONT}`;
+    ctx.lineWidth = 6;
+    ctx.strokeText(banner.sub, 0, 36);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(banner.sub, 0, 36);
+  }
+  ctx.restore();
+}
+
+
+/* =====================================================================
+   J. SIDE PANELS - the Next box and the Evolution Key
+   ===================================================================== */
+
+// Sets up a small canvas so it looks sharp, and returns its drawing context
+function prepSmallCanvas(c, w, h = w) {
+  c.width = w * DPR;
+  c.height = h * DPR;
+  const cx = c.getContext('2d');
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  return cx;
+}
+
+function drawNextPreview() {
+  const cx = prepSmallCanvas(document.getElementById('nextCanvas'), 96);
+  drawItem(cx, nextItem, 48, 48, Math.min(1, 32 / itemRadius(nextItem)));
+  document.getElementById('nextLabel').textContent =
+    nextItem.kind === 'power' ? '✨ ' + POWERUPS[nextItem.power].name : (nextItem.sticky ? 'Sticky ' : '') + SHAPE_CHAIN[nextItem.tier].name;
+}
+
+// Builds the Evolution Key on the right (and the mini chain strip on phones)
+function buildKey(flashNewest) {
+  const list = document.getElementById('keyList');
+  list.innerHTML = '';
+  SHAPE_CHAIN.forEach((def, tier) => {
+    const row = document.createElement('div');
+    row.className = 'key-row';
+    if (tier === maxTierReached && tier > 0) row.classList.add('reached');
+    if (flashNewest && tier === maxTierReached) row.classList.add('flash');
+    const c = document.createElement('canvas');
+    // In Color Mode the key is grey, because any color can be any shape
+    drawShape(prepSmallCanvas(c, 36), tier, 18, 19, 12, 0, colorMode ? '#cfc8ef' : def.color,
+              { mood: tier <= maxTierReached ? 'happy' : 'normal' });
+    row.appendChild(c);
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = def.name;
+    row.appendChild(name);
+    if (tier < DROPPABLE_TIERS) {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = 'drops';
+      row.appendChild(badge);
+    }
+    if (tier > 0) {
+      const pts = document.createElement('span');
+      pts.className = 'pts';
+      pts.textContent = '+' + def.points;
+      row.appendChild(pts);
+    }
+    list.appendChild(row);
+    const arrow = document.createElement('div');
+    arrow.className = 'key-arrow';
+    arrow.textContent = tier < LAST ? '▼ two make one' : `two ${def.name}s = SUPERNOVA +${MAX_MERGE_BONUS}`;
+    list.appendChild(arrow);
+  });
+
+  let html = colorMode
+    ? '<div class="key-note"><b>Color Mode:</b> shapes must match in shape AND color to merge.</div><div class="swatches">' +
+      COLOR_PALETTE.slice(0, NUM_COLORS).map(col => `<div class="swatch" style="background:${col}"></div>`).join('') + '</div>'
+    : '<div class="key-note"><b>Classic Mode:</b> any two matching shapes merge.</div>';
+  if (STICKY_CHANCE > 0) {
+    html += `<h2>Sticky shapes</h2><div class="power-row"><canvas id="stickyIcon"></canvas><div><b>Covered in goo</b><br>Glues to whatever it touches for ${STICKY_TIME}s. Merge it to clear the goo early.</div></div>`;
+  }
+  html += '<h2>Power-ups</h2>';
+  for (const k of Object.keys(POWERUPS)) {
+    if (POWERUPS[k].enabled) html += `<div class="power-row"><canvas data-power="${k}"></canvas><div><b>${POWERUPS[k].name}</b><br>${POWERUPS[k].about}</div></div>`;
+  }
+  const extra = document.getElementById('keyExtra');
+  extra.innerHTML = html;
+  const stickyIcon = document.getElementById('stickyIcon');
+  if (stickyIcon) {
+    const sc = prepSmallCanvas(stickyIcon, 34);
+    drawShape(sc, 2, 17, 16, 10, 0, colorMode ? '#cfc8ef' : SHAPE_CHAIN[2].color, {});
+    drawGoo(sc, 17, 16, 10, 0.6, 1);
+  }
+  extra.querySelectorAll('canvas[data-power]').forEach(c => drawPowerUp(prepSmallCanvas(c, 34), c.dataset.power, 17, 18, 10, 0.4));
+
+  drawChainStrip();
+}
+
+// Phones: a one-line version of the key above the game:  ● › ▲ › ■ ...
+function drawChainStrip() {
+  const c = document.getElementById('chainStrip');
+  const w = c.clientWidth;
+  if (!w) return;   // hidden on big screens
+  const cx = prepSmallCanvas(c, w, 34);
+  const gap = w / SHAPE_CHAIN.length;
+  cx.font = '16px sans-serif';
+  cx.textAlign = 'center';
+  cx.textBaseline = 'middle';
+  SHAPE_CHAIN.forEach((def, tier) => {
+    const x = gap * (tier + 0.5);
+    if (tier === maxTierReached && tier > 0) {
+      cx.fillStyle = 'rgba(0, 240, 255, 0.22)';
+      cx.beginPath(); cx.arc(x, 17, 16, 0, TAU); cx.fill();
+    }
+    drawShape(cx, tier, x, 17, 7 + tier * 0.9, 0, colorMode ? '#cfc8ef' : def.color, { face: false });
+    if (tier < LAST) {
+      cx.fillStyle = '#a69ed3';
+      cx.fillText('›', x + gap / 2, 16);
+    }
+  });
+}
+
+// Fits the game on screen: never wider than the window or taller than it
+function sizeCanvas() {
+  const small = window.matchMedia('(max-width: 1000px)').matches;
+  hudInCanvas = small;
+  const taken = small ? 140 : 40;   // room for the key strip and buttons on phones
+  const screenW = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
+  const w = Math.max(240, Math.min(W, screenW - 32, (window.innerHeight - taken) * W / H));
+  canvas.style.width = w + 'px';
+  drawChainStrip();
+}
+
+
+/* =====================================================================
+   K. CONTROLS - mouse, touch, keyboard and buttons
+   ===================================================================== */
+
+// Turns a pointer position on the page into a position in the game world
+function aimAt(clientX) {
+  const rect = canvas.getBoundingClientRect();
+  heldX = screenToWorldX(((clientX - rect.left) / rect.width) * W);
+}
+
+// Mouse: move to aim, click to drop. Touch: drag to aim, lift finger to drop.
+let skipNextUp = false;
+canvas.addEventListener('pointermove', e => aimAt(e.clientX));
+canvas.addEventListener('pointerdown', e => {
+  initAudio();
+  if (state === 'paused') { state = 'playing'; skipNextUp = true; return; }
+  aimAt(e.clientX);
+  if (e.pointerType === 'mouse') { if (e.button === 0) drop(); }
+  else canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointerup', e => {
+  if (skipNextUp) { skipNextUp = false; return; }
+  if (e.pointerType !== 'mouse') drop();
+});
+
+window.addEventListener('keydown', e => {
+  initAudio();
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  keysDown[key] = true;
+  if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) e.preventDefault(); // no page scrolling
+  if (key === ' ' || key === 'ArrowDown') {
+    if (state === 'over') restart();
+    else drop();
+  }
+  if (key === 'p') {
+    if (state === 'playing') state = 'paused';
+    else if (state === 'paused') state = 'playing';
+  }
+  if (key === 'm') toggleMute();
+});
+window.addEventListener('keyup', e => {
+  keysDown[e.key.length === 1 ? e.key.toLowerCase() : e.key] = false;
+});
+
+// Pause automatically if you switch tabs
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && state === 'playing') state = 'paused';
+});
+window.addEventListener('resize', sizeCanvas);
+
+// Buttons. (blur() stops the Space key from "clicking" them again later.)
+function onButton(id, fn) {
+  const btn = document.getElementById(id);
+  btn.addEventListener('click', () => { initAudio(); fn(); btn.blur(); });
+}
+
+function toggleMute() {
+  muted = !muted;
+  document.getElementById('muteBtn').textContent = muted ? '🔇 Sound off' : '🔊 Sound on';
+  try { localStorage.setItem('shapeDrop2_muted', muted ? '1' : '0'); } catch (e) {}
+}
+
+onButton('modeBtn', () => {
+  colorMode = !colorMode;
+  document.getElementById('modeBtn').textContent = colorMode ? 'Mode: Color 🎨' : 'Mode: Classic';
+  restart();   // switching modes starts a new game
+});
+onButton('muteBtn', toggleMute);
+onButton('restartBtn', restart);
+onButton('playAgainBtn', restart);
+
+
+/* =====================================================================
+   L. MAIN LOOP - runs about 60 times every second
+   ===================================================================== */
+let lastTime = performance.now();
+let physicsTimeBank = 0;   // leftover time, so physics runs at the same speed on every computer
+
+function frame(now) {
+  const realDt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+  let dt = realDt;
+  if (slowMo > 0) { slowMo -= realDt; dt *= 0.3; }   // slow motion on huge moments
+
+  if (state === 'playing') {
+    physicsTimeBank += dt;
+    while (physicsTimeBank >= PHYSICS_STEP) {
+      physicsStep(PHYSICS_STEP);
+      physicsTimeBank -= PHYSICS_STEP;
+    }
+    updateGame(dt);
+  } else if (state === 'ending') {
+    updateEnding(realDt);
+  }
+  if (state !== 'paused') {
+    gameTime += dt;
+    updateFx(dt);
+  }
+
+  // The score on screen counts up smoothly to the real score
+  if (shownScore !== score) {
+    shownScore = score < shownScore ? score : Math.min(score, shownScore + Math.max(1, Math.ceil((score - shownScore) * realDt * 12)));
+    document.getElementById('score').textContent = shownScore;
+  }
+
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ---- Let's go! ----
+for (let i = 0; i < 12; i++) {   // faint background shapes
+  floaters.push({ tier: i % SHAPE_CHAIN.length, x: rand(0, W), y: rand(0, H), r: rand(10, 30),
+                  vy: rand(6, 16), a: rand(0, TAU), va: rand(-0.3, 0.3), alpha: rand(0.05, 0.1) });
+}
+try { if (localStorage.getItem('shapeDrop2_muted') === '1') toggleMute(); } catch (e) {}
+sizeCanvas();
+restart();
+requestAnimationFrame(frame);
+// Redraw the panels once the fancy fonts have loaded
+if (document.fonts) document.fonts.ready.then(() => { buildKey(false); drawNextPreview(); });
+</script>
+</body>
+</html>
