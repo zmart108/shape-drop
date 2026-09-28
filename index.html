@@ -4,29 +4,32 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Shape Drop</title>
-<!-- Fonts: if you're offline, the game still works and just uses a backup font. -->
+<!-- Fonts: if they can't load, the game uses a backup font. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@600;800&display=swap">
+<!-- Matter.js: a real 2D physics engine (true polygon collisions). Needs an internet connection the first time. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.20.0/matter.min.js"></script>
 
 <!--
   =====================================================================
-   SHAPE DROP - a falling-and-merging puzzle game
+   SHAPE DROP - a falling-and-merging puzzle game (polygon edition)
   =====================================================================
    How this file is organized:
      1. <style>  : CSS - how the page looks (colors, panels, buttons)
      2. HTML     : the page layout (score panel, game canvas, key)
      3. <script> : JavaScript - the game itself, in lettered sections:
-          A. SETTINGS         <- start here to experiment!
+          A. SETTINGS          <- start here to experiment!
+          A2. SHAPE BLUEPRINTS <- the corner points of every shape
           B. Helpers & game state
-          C. Sound effects    (made from code, no sound files)
-          D. Drawing shapes   (shapes, faces, power-ups)
-          E. Physics          (falling, bouncing, stacking)
+          C. Sound effects     (made from code, no sound files)
+          D. Drawing shapes    (shapes, faces, power-ups, goo)
+          E. Physics           (Matter.js: real polygon collisions)
           F. Merging & power-ups
-          G. Eye candy        (shards, bubbles, glitches, sparks)
-          H. Game flow        (drop, score, combos, game over)
+          G. Eye candy         (shards, bubbles, glitches, sparks)
+          H. Game flow         (drop, rotate, score, combos, game over)
           I. Drawing the game every frame
-          J. Side panels      (Next box and Evolution Key)
-          K. Controls         (mouse, touch, keyboard, buttons)
-          L. Main loop        (runs about 60 times per second)
+          J. Side panels       (Next box and Evolution Key)
+          K. Controls          (mouse, touch, keyboard, buttons)
+          L. Main loop         (runs about 60 times per second)
   =====================================================================
 -->
 
@@ -155,6 +158,7 @@
   button:hover { background: #26184d; box-shadow: 0 3px 0 #120d2c, 0 0 14px rgba(0, 240, 255, 0.35); }
   button:active { transform: translateY(2px); box-shadow: 0 1px 0 #120d2c; }
   button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  #rotateBtn { background: #0f2d3a; color: #b8fbff; box-shadow: 0 3px 0 #06161d, inset 0 0 0 1px rgba(0, 240, 255, 0.4); }
   button.primary {
     font-family: var(--display);
     font-weight: 400;
@@ -216,11 +220,11 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 2px 8px;
+    padding: 1px 8px;
     border-radius: 12px;
   }
-  .key-row canvas { width: 36px; height: 36px; flex-shrink: 0; }
-  .key-row .name { font-weight: 800; font-size: 14px; flex: 1; min-width: 0; }
+  .key-row canvas { width: 32px; height: 32px; flex-shrink: 0; }
+  .key-row .name { font-weight: 800; font-size: 13.5px; flex: 1; min-width: 0; }
   .key-row .pts { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .key-row .badge {
     font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
@@ -229,7 +233,7 @@
   .key-row.reached { background: rgba(0, 240, 255, 0.1); box-shadow: inset 0 0 0 1px rgba(0, 240, 255, 0.6), 0 0 14px rgba(0, 240, 255, 0.25); }
   .key-row.flash { animation: keyFlash 0.9s ease-out; }
   @keyframes keyFlash { 0% { transform: scale(1.12); background: rgba(0, 240, 255, 0.45); } }
-  .key-arrow { padding-left: 22px; font-size: 10px; line-height: 11px; color: var(--muted); }
+  .key-arrow { padding-left: 20px; font-size: 9px; line-height: 9px; color: var(--muted); }
   .key-note { font-size: 12.5px; color: var(--muted); margin: 10px 0 8px; line-height: 1.45; }
   .key-note b { color: var(--text); }
   .swatches { display: flex; gap: 6px; margin-bottom: 12px; }
@@ -240,7 +244,7 @@
   .power-row b { color: var(--text); }
 
   /* ---------- Phones and small screens ----------
-     Game on top with a compact score bar above it, key underneath. */
+     Game on top with a compact bar above it, key underneath. */
   @media (max-width: 1000px) {
     body { align-items: flex-start; }
     .layout { flex-direction: column; align-items: center; gap: 10px; width: 100%; }
@@ -248,16 +252,10 @@
     .left-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
     /* Score and Next are drawn inside the game on phones, to leave room for the tall box */
     .left-panel h1, .left-panel .help, #nextLabel, .left-panel .stats, .left-panel .next-box { display: none; }
-    .stats { flex-direction: row; gap: 14px; margin: 0; }
-    .stat .label { font-size: 10px; letter-spacing: 1px; }
-    .stat .value { font-size: 28px; }
-    .stat .value.best { font-size: 20px; }
-    .next-box { display: flex; align-items: center; gap: 6px; margin: 0; }
-    .next-box h2 { margin: 0; font-size: 10px; letter-spacing: 1px; }
-    #nextCanvas { width: 50px; height: 50px; margin: 0; border-radius: 10px; }
     .buttons { flex-direction: row; flex: 1 1 100%; gap: 6px; }
-    .buttons button { flex: 1; padding: 7px 4px; font-size: 12px; }
+    .buttons button { flex: 1; padding: 7px 2px; font-size: 11.5px; }
     #chainStrip { display: block; width: 100%; height: 34px; }
+    .wide { display: none; }   /* shorter button labels, so they fit on one line */
     .key-panel { width: 100%; max-width: 600px; }
     .overlay-box { padding: 18px 16px; }
     .overlay-box .final { font-size: 48px; }
@@ -298,16 +296,18 @@
       <canvas id="chainStrip"></canvas>
 
       <div class="buttons">
-        <button id="modeBtn">Mode: Classic</button>
-        <button id="muteBtn">🔊 Sound on</button>
+        <button id="rotateBtn">⟳ Rotate</button>
+        <button id="modeBtn"><span class="wide">Mode: </span>Classic</button>
+        <button id="muteBtn">🔊<span class="wide"> Sound</span> on</button>
         <button id="restartBtn">↻ Restart</button>
       </div>
 
       <div class="help">
         <b>Move:</b> mouse or ← →<br>
+        <b>Rotate:</b> ↑ / W, scroll wheel or right-click<br>
         <b>Drop:</b> click or Space<br>
         <b>Pause:</b> P &nbsp; <b>Mute:</b> M<br>
-        Match two shapes to merge them into the next one. Quick merges in a row build a combo!
+        Shapes have real corners now: they wedge, jam and hook onto each other. Turn them to find the gaps!
       </div>
     </div>
 
@@ -323,7 +323,7 @@
           <div id="newBest" hidden>★ NEW HIGH SCORE ★</div>
           <div class="end-stats">
             <canvas id="endShape"></canvas>
-            <div><b id="endShapeName">Circle</b>biggest shape</div>
+            <div><b id="endShapeName">Sliver</b>biggest shape</div>
             <div><b id="endMerges">0</b>merges</div>
             <div><b id="endCombo">x1</b>best combo</div>
           </div>
@@ -348,22 +348,24 @@
    ===================================================================== */
 
 // ---- Movement & physics ----
-const GRAVITY = 1500;          // How fast shapes fall. Bigger = faster.
-const BOUNCINESS = 0.15;       // 0 = no bounce, 1 = super bouncy.
-const FRICTION = 0.1;          // How "grippy" shapes are against each other (0 to 1).
+const GRAVITY = 1500;          // How fast shapes fall (pixels per second, per second). Bigger = faster.
+const BOUNCINESS = 0.03;       // 0 = no bounce, 1 = super bouncy. Low = shapes thud and stay put.
+const MAX_FALL_SPEED = 800;    // Top speed (pixels per second), so thin shapes can't zip through each other.
 const DROP_COOLDOWN = 0.45;    // Seconds you must wait between drops.
 const KEY_MOVE_SPEED = 420;    // How fast the arrow keys move your shape (pixels per second).
+const ROTATE_STEP = 45;        // Degrees your held shape turns each time you rotate it.
+const SHOW_PHYSICS_PIECES = false; // true = draw the real collision pieces in white (fun for learning!). G key toggles it.
 
 // ---- Container ----
 // A tight, tall box: shapes can't just spread out, so the pile climbs fast.
-const CONTAINER_START_WIDTH = 280;   // Starting width of the box (pixels). Try 380 for an easier, wider box.
+const CONTAINER_START_WIDTH = 280;   // Starting width of the box (pixels).
 const CONTAINER_HEIGHT = 640;        // Height of the box (pixels).
 const CONTAINER_EXPAND_AMOUNT = 50;  // How much wider each "Bigger Box" power-up makes it.
 const MAX_EXPANSIONS = 2;            // How many times the box can grow.
 const GAME_OVER_DELAY = 2.5;         // Seconds a shape may stay above the red line before you lose.
 
 // ---- Which shapes drop ----
-const DROPPABLE_TIERS = 5;     // Only the first N shapes in the chain drop (5 = Circle to Hexagon). 4 = easier.
+const DROPPABLE_TIERS = 6;     // Only the first N shapes in the chain drop (6 = Sliver to Gear). 5 = easier.
 
 // ---- Color Mode ----
 const NUM_COLORS = 3;          // Colors used in Color Mode (2 = easy, 3 = medium, 4-5 = hard).
@@ -387,37 +389,180 @@ const POWERUPS = {
   expand:   { enabled: true, weight: 1,   name: 'Bigger Box', about: 'Makes the container wider.' },
   wildcard: { enabled: true, weight: 1.2, name: 'Wildcard',   about: 'Upgrades the first shape it touches.' },
   bomb:     { enabled: true, weight: 1,   name: 'Bomb',       about: 'Blasts away the shapes where it lands.' },
-  shake:    { enabled: true, weight: 0.7, name: 'Shake Up',   about: 'Jolts the pile and knocks off all sticky goo.' },
+  shake:    { enabled: true, weight: 0.9, name: 'Shake Up',   about: 'Jolts the pile loose and knocks off all sticky goo.' },
 };
 
 // ---- Scoring ----
 const COMBO_WINDOW = 1.0;      // Seconds you have to make the next merge to keep a combo going.
 const COMBO_BONUS = 0.5;       // Each combo step adds +50% points (x1.5, x2, x2.5 ...).
 const MAX_COMBO_MULTIPLIER = 3; // Combo points never go above this multiplier.
-const MAX_MERGE_BONUS = 150;   // Points for merging two Suns (the last shape). They vanish!
+const MAX_MERGE_BONUS = 250;   // Points for merging two of the last shape (they vanish in a Supernova!).
 
 // ---- Eye candy ----
 const EFFECTS_LEVEL = 2;       // 0 = calm, 1 = normal, 2 = maximum eye candy.
 const SCREEN_SHAKE = true;     // Shake the screen on big merges and bombs.
 const SHOW_FACES = true;       // Cute faces on the shapes.
+const RAINBOW_FINAL = true;    // The last shape shimmers through every color in Classic Mode.
 
-// ---- The evolution chain ----
+// ---- The evolution chain (11 stages) ----
 // Two of a shape merge into the NEXT shape in this list.
-//   type:   how it's drawn ('circle', 'polygon', 'star', 'heart', 'sun')
-//   sides:  number of sides or points (polygon, star, sun)
-//   radius: size in pixels (the physics treats every shape as a circle this size)
+//   shape:  which blueprint to use (see section A2 just below)
+//   size:   how big it is, in pixels (the blueprint is about 2 units across, so 2 x size = width).
+//           Each stage has about 1.4x the AREA of the one before, so merging two shapes makes one
+//           that fills almost as much room - that's what makes the box fill up.
 //   color:  its neon color in Classic Mode (rainbow order, so the chain is easy to learn)
 //   points: points for CREATING this shape with a merge
+//   friction / grip: how much it slides (friction) and how hard it is to get moving once
+//                    it's resting (grip). Higher = shapes lock in place and jam.
 const SHAPE_CHAIN = [
-  { name: 'Circle',   type: 'circle',             radius: 15, color: '#ff2e63', points: 1  },
-  { name: 'Triangle', type: 'polygon', sides: 3,  radius: 21, color: '#ff8a00', points: 3  },
-  { name: 'Square',   type: 'polygon', sides: 4,  radius: 28, color: '#f5ff1f', points: 6  },
-  { name: 'Pentagon', type: 'polygon', sides: 5,  radius: 36, color: '#39ff14', points: 10 },
-  { name: 'Hexagon',  type: 'polygon', sides: 6,  radius: 46, color: '#00f0ff', points: 15 },
-  { name: 'Star',     type: 'star',    sides: 5,  radius: 58, color: '#4d7cff', points: 21 },
-  { name: 'Heart',    type: 'heart',              radius: 72, color: '#c02cff', points: 28 },
-  { name: 'Sun',      type: 'sun',     sides: 12, radius: 88, color: '#ff2bd6', points: 36 },
+  { name: 'Sliver',    shape: 'sliver',    size: 29, color: '#ff2e63', points: 1,  friction: 0.3,  grip: 0.5 },
+  { name: 'Chevron',   shape: 'chevron',   size: 34, color: '#ff7a00', points: 2,  friction: 0.6,  grip: 1.0 },
+  { name: 'Cross',     shape: 'cross',     size: 26, color: '#ffe600', points: 4,  friction: 0.7,  grip: 1.2 },
+  { name: 'Crescent',  shape: 'crescent',  size: 41, color: '#00ff9c', points: 7,  friction: 0.4,  grip: 0.8 },
+  { name: 'Rhombus',   shape: 'rhombus',   size: 49, color: '#00f0ff', points: 11, friction: 0.5,  grip: 1.0 },
+  { name: 'Gear',      shape: 'gear',      size: 43, color: '#3d8bff', points: 16, friction: 0.9,  grip: 2.5 },
+  { name: 'T-Block',   shape: 'tblock',    size: 59, color: '#8a5cff', points: 22, friction: 0.6,  grip: 1.0 },
+  { name: 'Bolt',      shape: 'bolt',      size: 88, color: '#d42cff', points: 29, friction: 0.6,  grip: 1.2 },
+  { name: 'Trapezoid', shape: 'trapezoid', size: 80, color: '#ff2bd6', points: 37, friction: 0.95, grip: 2.5 },
+  { name: 'Crown',     shape: 'crown',     size: 90, color: '#ffd9f4', points: 46, friction: 0.7,  grip: 1.2 },
+  { name: 'Labyrinth', shape: 'labyrinth', size: 117, color: '#ffffff', points: 56, friction: 0.8,  grip: 1.5 },
 ];
+
+
+/* =====================================================================
+   A2. SHAPE BLUEPRINTS - the corner points of every shape
+   ---------------------------------------------------------------------
+   Every shape is drawn on a small grid where the shape fits roughly
+   between -1 and 1 (x goes right, y goes DOWN). Each blueprint gives:
+     outline: the corner points around the whole shape (used for DRAWING)
+     parts:   convex pieces that fill the outline exactly (used for PHYSICS)
+     face:    where the face goes (x, y) and how big it is (r)
+
+   Why "parts"? The physics engine can only collide CONVEX shapes (shapes with
+   no dents, like a square or a triangle). A dented shape like a V or a crown
+   gets built from several convex pieces glued together into one solid body.
+
+   Make your own shape: copy a blueprint, change the points, give it a new
+   name, and use that name in SHAPE_CHAIN. Keep every piece in "parts" convex!
+   ===================================================================== */
+function rectPts(x1, y1, x2, y2) { return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]; }
+function rotPts(pts, quarterTurns) {       // turn points 90° clockwise, n times
+  return pts.map(p => { let q = p; for (let i = 0; i < quarterTurns; i++) q = [-q[1], q[0]]; return q; });
+}
+
+const SHAPE_BLUEPRINTS = {
+  // Stage 1: The Sliver - a long, thin plank that lays down like a floor or a wall
+  sliver: () => ({
+    outline: rectPts(-1, -0.22, 1, 0.22),
+    parts: [rectPts(-1, -0.22, 1, 0.22)],
+    face: { x: 0, y: 0, r: 0.2 },
+  }),
+
+  // Stage 2: The Chevron - a V that opens upward and traps small shapes (2 pieces: left arm + right arm)
+  chevron: () => {
+    const A = [-1, -0.7], B = [-0.6, -0.7], C = [0, 0.14], D = [0.6, -0.7], E = [1, -0.7], F = [0, 0.7];
+    return { outline: [A, B, C, D, E, F], parts: [[A, B, C, F], [C, D, E, F]], face: { x: 0, y: 0.4, r: 0.2 } };
+  },
+
+  // Stage 3: The Cross - a plus sign that refuses to roll (3 pieces: tall bar + two side arms)
+  cross: () => {
+    const t = 0.34;
+    return {
+      outline: [[-t, -1], [t, -1], [t, -t], [1, -t], [1, t], [t, t], [t, 1], [-t, 1], [-t, t], [-1, t], [-1, -t], [-t, -t]],
+      parts: [rectPts(-t, -1, t, 1), rectPts(-1, -t, -t, t), rectPts(t, -t, 1, t)],
+      face: { x: 0, y: 0, r: 0.3 },
+    };
+  },
+
+  // Stage 4: The Crescent Moon - a big circle with a smaller circle bitten out.
+  // Lopsided weight makes it swing and rock. (10 thin slices along the curve)
+  crescent: () => {
+    const R = 1, cx = 0.45, r = 0.85;                   // outer circle, and the "bite" circle's center and size
+    const tipX = (R * R - r * r + cx * cx) / (2 * cx), tipY = Math.sqrt(R * R - tipX * tipX);
+    const outerStart = Math.atan2(-tipY, tipX) + Math.PI * 2, outerEnd = Math.atan2(tipY, tipX);
+    const innerStart = Math.atan2(tipY, tipX - cx), innerEnd = Math.atan2(-tipY, tipX - cx) + Math.PI * 2;
+    const K = 10, outer = [], inner = [];
+    for (let i = 0; i <= K; i++) {
+      const a = outerStart + (outerEnd - outerStart) * i / K;
+      outer.push([R * Math.cos(a), R * Math.sin(a)]);
+      const b = innerStart + (innerEnd - innerStart) * i / K;
+      inner.push([cx + r * Math.cos(b), r * Math.sin(b)]);
+    }
+    inner.reverse();   // now inner[i] lines up with outer[i]
+    const parts = [];
+    for (let i = 0; i < K; i++) parts.push(dropDuplicatePoints([outer[i], outer[i + 1], inner[i + 1], inner[i]]));
+    return { outline: outer.concat(inner.slice(1, -1).reverse()), parts, face: { x: -0.7, y: 0, r: 0.2 } };
+  },
+
+  // Stage 5: The Rhombus - a tall diamond whose sharp points dig into gaps
+  rhombus: () => {
+    const p = [[0, -1], [0.6, 0], [0, 1], [-0.6, 0]];
+    return { outline: p, parts: [p], face: { x: 0, y: 0, r: 0.22 } };
+  },
+
+  // Stage 6: The Gear - 8 teeth that grind and catch (1 round body + 8 tooth pieces)
+  gear: () => {
+    const bodyR = 0.74, toothR = 1.0, teeth = 8, baseHalf = 0.19, tipHalf = 0.12;  // half-widths are angles (radians)
+    const at = (rad, a) => [rad * Math.cos(a), rad * Math.sin(a)];
+    const outline = [], body = [], parts = [];
+    for (let k = 0; k < teeth; k++) {
+      const a = -Math.PI / 2 + k * (Math.PI * 2 / teeth);
+      const b1 = at(bodyR, a - baseHalf), t1 = at(toothR, a - tipHalf), t2 = at(toothR, a + tipHalf), b2 = at(bodyR, a + baseHalf);
+      const gap = at(bodyR, a + Math.PI / teeth);
+      outline.push(b1, t1, t2, b2, gap);
+      body.push(b1, b2, gap);
+      parts.push([b1, t1, t2, b2]);
+    }
+    parts.unshift(body);
+    return { outline, parts, face: { x: 0, y: 0, r: 0.4 } };
+  },
+
+  // Stage 7: The T-Block (Anvil) - top-heavy; upside down it makes an umbrella over the pile
+  tblock: () => ({
+    outline: [[-1, -0.75], [1, -0.75], [1, -0.25], [0.32, -0.25], [0.32, 0.75], [-0.32, 0.75], [-0.32, -0.25], [-1, -0.25]],
+    parts: [rectPts(-1, -0.75, 1, -0.25), rectPts(-0.32, -0.25, 0.32, 0.75)],
+    face: { x: 0, y: -0.5, r: 0.22 },
+  }),
+
+  // Stage 8: The Lightning Bolt - jagged and offset, it tangles easily (2 pieces)
+  bolt: () => {
+    const A = [0.1, -1], B = [0.75, -1], C = [0.25, -0.15], D = [0.7, -0.15], E = [-0.45, 1], F = [-0.05, 0.1], G = [-0.55, 0.1];
+    return { outline: [A, B, C, D, E, F, G], parts: [[A, B, C, F, G], [C, D, E, F]], face: { x: 0.13, y: -0.5, r: 0.2 } };
+  },
+
+  // Stage 9: The Trapezoid - a flat top that makes a steady, grippy landing pad
+  trapezoid: () => {
+    const p = [[-0.6, -0.55], [0.6, -0.55], [1, 0.55], [-1, 0.55]];
+    return { outline: p, parts: [p], face: { x: 0, y: 0.05, r: 0.3 } };
+  },
+
+  // Stage 10: The Crown - a wide base with three spikes that stab falling shapes (base + 3 spikes)
+  crown: () => ({
+    outline: [[-1, 0.7], [-1, 0.1], [-0.9, -0.75], [-0.45, 0.1], [-0.28, 0.1], [0, -0.95], [0.28, 0.1],
+              [0.45, 0.1], [0.9, -0.75], [1, 0.1], [1, 0.7]],
+    parts: [rectPts(-1, 0.1, 1, 0.7),
+            [[-1, 0.1], [-0.9, -0.75], [-0.45, 0.1]],
+            [[-0.28, 0.1], [0, -0.95], [0.28, 0.1]],
+            [[0.45, 0.1], [0.9, -0.75], [1, 0.1]]],
+    face: { x: 0, y: 0.4, r: 0.22 },
+  }),
+
+  // Stage 11: The Labyrinth - a massive block with four staggered, hammer-headed arms
+  // that catch on everything (center + 4 arms + 4 hammer heads = 9 pieces)
+  labyrinth: () => {
+    const quarter = [[0.4, -0.4], [0.82, -0.4], [0.82, -0.5], [1, -0.5], [1, 0.04], [0.82, 0.04], [0.82, -0.06], [0.4, -0.06]];
+    let outline = [];
+    for (let n = 0; n < 4; n++) outline = outline.concat(rotPts(quarter, n));
+    const parts = [rectPts(-0.4, -0.4, 0.4, 0.4)];
+    const arm = rectPts(0.4, -0.4, 0.82, -0.06), head = rectPts(0.82, -0.5, 1, 0.04);
+    for (let n = 0; n < 4; n++) parts.push(rotPts(arm, n), rotPts(head, n));
+    return { outline, parts, face: { x: 0, y: 0, r: 0.3 } };
+  },
+};
+
+function dropDuplicatePoints(pts) {
+  return pts.filter((p, i) => { const q = pts[(i + 1) % pts.length]; return Math.hypot(p[0] - q[0], p[1] - q[1]) > 1e-6; });
+}
 
 
 /* =====================================================================
@@ -433,12 +578,12 @@ const CONTAINER_TOP = 108;                          // the red danger line
 const FLOOR_Y = CONTAINER_TOP + CONTAINER_HEIGHT;   // the floor of the box
 const H = FLOOR_Y + 18;                             // game height
 const CENTER_X = W / 2;
-const LAST = SHAPE_CHAIN.length - 1;                // index of the final shape (the Sun)
+const LAST = SHAPE_CHAIN.length - 1;                // index of the final shape
 const PHYSICS_STEP = 1 / 120;                       // physics runs 120 times a second
-const SOLVER_ITERATIONS = 4;                        // times per step we untangle overlaps
 const POP_TIME = 0.55;                              // length of the "boing" when a shape is born
-const GROW_TIME = 0.2;                              // how fast a new shape grows to full size
+const GROW_TIME = 0.25;                             // how long a new shape takes to grow to full size
 const GLITCH_TIME = 0.26;                           // length of the glitch flicker on new shapes
+const WALL_THICKNESS = 80;
 const DISPLAY_FONT = '"Lilita One", "Arial Rounded MT Bold", "Trebuchet MS", sans-serif';
 
 // People who turn on "reduce motion" in their device settings get calmer effects.
@@ -449,7 +594,6 @@ const FX = REDUCED_MOTION ? Math.min(EFFECTS_LEVEL, 1) : EFFECTS_LEVEL;
 const TAU = Math.PI * 2;
 const rand = (a = 0, b = 1) => a + Math.random() * (b - a);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const smooth = t => t * t * (3 - 2 * t);
 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
 const easeOutBack = t => 1 + 2.70158 * Math.pow(t - 1, 3) + 1.70158 * Math.pow(t - 1, 2);
 const easeOutElastic = t => t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * (TAU / 3)) + 1;
@@ -469,6 +613,59 @@ function tint(hex, amount) {
   return (tintCache[key] = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`);
 }
 
+// Turns '#ff2e63' + 0.5 into 'rgba(255,46,99,0.5)'
+const alphaCache = {};
+function withAlpha(hex, a) {
+  const key = hex + a;
+  if (alphaCache[key]) return alphaCache[key];
+  const n = parseInt(hex.slice(1), 16);
+  return (alphaCache[key] = `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`);
+}
+
+// A rainbow color as a hex string (hue in degrees). Rounded so colors can be cached.
+function rainbowHex(hue) {
+  const h = (Math.round(hue / 6) * 6) % 360, s = 1, l = 0.62;
+  const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return '#' + [f(0), f(8), f(4)].map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
+}
+
+// ---- Turn each blueprint into a ready-to-use shape definition ----
+// We move every blueprint so its balance point (center of mass) sits at (0,0).
+// The physics engine spins shapes around that point, so drawing and physics line up.
+function polyArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; a += p[0] * q[1] - q[0] * p[1]; }
+  return a / 2;
+}
+function polyCentroid(pts) {
+  let a = 0, x = 0, y = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], q = pts[(i + 1) % pts.length], c = p[0] * q[1] - q[0] * p[1];
+    a += c; x += (p[0] + q[0]) * c; y += (p[1] + q[1]) * c;
+  }
+  return [x / (3 * a), y / (3 * a)];
+}
+const SHAPE_DEFS = SHAPE_CHAIN.map(chain => {
+  const bp = SHAPE_BLUEPRINTS[chain.shape]();
+  let area = 0, cx = 0, cy = 0;
+  for (const part of bp.parts) {
+    const a = Math.abs(polyArea(part)), [px, py] = polyCentroid(part);
+    area += a; cx += px * a; cy += py * a;
+  }
+  cx /= area; cy /= area;
+  const shift = p => [p[0] - cx, p[1] - cy];
+  const outline = bp.outline.map(shift);
+  return {
+    ...chain,
+    outline,
+    parts: bp.parts.map(part => part.map(shift)),
+    face: { x: bp.face.x - cx, y: bp.face.y - cy, r: bp.face.r },
+    reach: Math.max(...outline.map(p => Math.hypot(p[0], p[1]))),           // farthest point from the center
+    extent: Math.max(...outline.map(p => Math.max(Math.abs(p[0]), Math.abs(p[1])))), // for fitting icons in boxes
+  };
+});
+
 // ---- The canvas we draw the game on ----
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -484,11 +681,14 @@ let floaters = [];       // faint shapes drifting in the background
 let state = 'playing';   // 'playing', 'paused', 'ending' (shapes popping) or 'over'
 let colorMode = false;   // false = Classic (shape only), true = Color Mode (shape + color)
 let muted = false;
+let showPieces = SHOW_PHYSICS_PIECES;
 
 let score = 0, shownScore = 0, highScore = 0;
 let currentItem = null;  // the shape you're holding
 let nextItem = null;     // the shape in the Next box
 let heldX = CENTER_X;    // left/right position of your held shape
+let heldAngle = 0;       // how far your held shape is turned (radians)
+let shownAngle = 0;      // the angle we draw it at (catches up smoothly)
 let dropCooldown = 0;
 let dropsCount = 0;
 let lastWasPower = false;
@@ -512,7 +712,7 @@ let danger = false;      // true while something is over the red line
 let dangerTick = 0;
 let banner = null;       // big message across the top ("NEW SHAPE!", "BOOM!")
 let endingQueue = [], endingTimer = 0;
-let hudInCanvas = false;  // phones: score and Next are drawn inside the game
+let hudInCanvas = false; // phones: score and Next are drawn inside the game
 const keysDown = {};
 
 
@@ -574,11 +774,12 @@ function noise(dur, { vol = 0.3, filter = 'lowpass', freq = 1000, delay = 0 } = 
 }
 
 // Notes of a happy (pentatonic) scale - merges climb up it, so combos sound musical
-const SCALE = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26, 28, 31];
-const noteFreq = step => 262 * Math.pow(2, SCALE[clamp(step, 0, SCALE.length - 1)] / 12);
+const SCALE = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26, 28, 31, 33, 36];
+const noteFreq = step => 220 * Math.pow(2, SCALE[clamp(step, 0, SCALE.length - 1)] / 12);
 
 const sounds = {
   drop:   () => tone(190, 0.09, { type: 'triangle', vol: 0.12, to: 110 }),
+  rotate: () => tone(700, 0.04, { type: 'triangle', vol: 0.06, to: 900 }),
   bubble: (delay = 0) => {                           // soapy "pop!"
     noise(0.05, { vol: 0.16, filter: 'highpass', freq: 2600, delay });
     tone(rand(900, 1300), 0.06, { vol: 0.07, to: 2200, delay });
@@ -607,132 +808,88 @@ const sounds = {
    D. DRAWING SHAPES
    ===================================================================== */
 
-// Each shape's outline as a list of points around (0,0), sized for radius 1.
-// We build these once, then just scale them up when drawing.
-function buildOutline(def) {
-  const pts = [];
-  if (def.type === 'circle') {
-    for (let i = 0; i < 20; i++) pts.push([Math.cos(i / 20 * TAU), Math.sin(i / 20 * TAU)]);
-  } else if (def.type === 'polygon') {
-    const n = def.sides;
-    const R = 0.95 / ((1 + Math.cos(Math.PI / n)) / 2); // pointy shapes drawn a bit bigger so they look like they touch
-    for (let i = 0; i < n; i++) {
-      const a = -Math.PI / 2 + i / n * TAU;
-      pts.push([Math.cos(a) * R, Math.sin(a) * R]);
-    }
-  } else if (def.type === 'star' || def.type === 'sun') {
-    const outer = def.type === 'star' ? 1.13 : 1.08;
-    const inner = def.type === 'star' ? 0.58 : 0.87;
-    for (let i = 0; i < def.sides * 2; i++) {
-      const a = -Math.PI / 2 + i / (def.sides * 2) * TAU;
-      const rad = i % 2 === 0 ? outer : inner;
-      pts.push([Math.cos(a) * rad, Math.sin(a) * rad]);
-    }
-  } else if (def.type === 'heart') {
-    for (let i = 0; i < 40; i++) {       // the classic heart curve from math class
-      const t = i / 40 * TAU;
-      const x = 16 * Math.pow(Math.sin(t), 3);
-      const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
-      pts.push([x / 15, (y - 2.6) / 15]);
-    }
-  }
-  return pts;
-}
-const OUTLINES = SHAPE_CHAIN.map(buildOutline);
-
-// Where the face sits on each kind of shape
-function faceSpot(def) {
-  if (def.type === 'polygon' && def.sides === 3) return { y: 0.2, gap: 0.24 };
-  if (def.type === 'heart') return { y: -0.06, gap: 0.3 };
-  if (def.type === 'star') return { y: 0.06, gap: 0.26 };
-  return { y: 0, gap: 0.3 };
-}
-
-// Traces a shape's outline around (0,0). It doesn't paint it yet.
-function traceShape(c, tier, r) {
+// Traces a shape's outline around (0,0) at a given size. It doesn't paint it yet.
+function traceShape(c, tier, s) {
+  const pts = SHAPE_DEFS[tier].outline;
   c.beginPath();
-  if (SHAPE_CHAIN[tier].type === 'circle') { c.arc(0, 0, r, 0, TAU); return; }
-  const pts = OUTLINES[tier];
-  c.moveTo(pts[0][0] * r, pts[0][1] * r);
-  for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0] * r, pts[i][1] * r);
+  c.moveTo(pts[0][0] * s, pts[0][1] * s);
+  for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0] * s, pts[i][1] * s);
   c.closePath();
 }
 
-// A flat, single-color version of a shape (used for glitch ghosts and backgrounds)
-function drawSilhouette(c, tier, x, y, r, angle, color, strokeOnly = false) {
+// A flat, single-color version of a shape (used for glitch ghosts, the aim ghost and backgrounds)
+function drawSilhouette(c, tier, x, y, s, angle, color, strokeOnly = false) {
   c.save();
   c.translate(x, y);
   c.rotate(angle);
-  traceShape(c, tier, r);
+  traceShape(c, tier, s);
+  c.lineJoin = 'round';
   if (strokeOnly) { c.strokeStyle = color; c.lineWidth = 2; c.stroke(); }
   else { c.fillStyle = color; c.fill(); }
   c.restore();
 }
 
-// Paints a full neon shape (with a face) at (x, y): a dark glassy body,
-// a glowing inside, and a bright neon-tube outline with a soft halo.
-// o = options: sx/sy (squash), look (where the eyes look), blink, mood, face
-function drawShape(c, tier, x, y, r, angle, color, o = {}) {
+// Paints a full neon shape (with a face) centered at (x, y), s pixels per blueprint unit:
+// a dark glassy body, a glowing inside, and a bright neon-tube outline with a soft halo.
+// o = options: look (where the eyes look), blink, mood, face
+function drawShape(c, tier, x, y, s, angle, color, o = {}) {
+  const def = SHAPE_DEFS[tier];
+  const glowR = s * def.reach;
   c.save();
   c.translate(x, y);
-  if (o.sx) c.scale(o.sx, o.sy);     // squash & stretch when landing
   c.rotate(angle);
   c.lineJoin = 'round';
 
   // Glassy body: dark at the edge, glowing with the neon color in the middle
-  const grad = c.createRadialGradient(0, -r * 0.15, r * 0.1, 0, 0, r * 1.2);
+  const grad = c.createRadialGradient(0, -glowR * 0.15, glowR * 0.1, 0, 0, glowR * 1.1);
   grad.addColorStop(0, withAlpha(color, 0.55));
   grad.addColorStop(0.7, withAlpha(color, 0.22));
   grad.addColorStop(1, withAlpha(color, 0.1));
-  traceShape(c, tier, r);
+  traceShape(c, tier, s);
   c.fillStyle = '#0b0718';
   c.fill();
   c.fillStyle = grad;
   c.fill();
 
   // Neon tube: two soft halo strokes, then a bright core
+  const line = Math.min(s, 40);
   c.save();
   c.globalCompositeOperation = 'lighter';
   c.strokeStyle = withAlpha(color, 0.16);
-  c.lineWidth = Math.max(6, r * 0.42);
+  c.lineWidth = Math.max(5, line * 0.32);
   c.stroke();
   c.strokeStyle = withAlpha(color, 0.35);
-  c.lineWidth = Math.max(3.5, r * 0.2);
+  c.lineWidth = Math.max(3, line * 0.15);
   c.stroke();
   c.restore();
   c.strokeStyle = tint(color, 0.55);
-  c.lineWidth = Math.max(1.6, r * 0.075);
+  c.lineWidth = Math.max(1.5, line * 0.06);
   c.stroke();
 
   // Little shine on the glass (always top-left, even while spinning)
-  const [lx, ly] = rotatePoint(-0.36 * r, -0.4 * r, -angle);
+  const [lx, ly] = rotatePoint(-0.3 * glowR, -0.32 * glowR, -angle);
   c.save();
   c.clip();
   c.globalAlpha *= 0.3;
   c.fillStyle = '#fff';
   c.beginPath();
-  c.ellipse(lx, ly, r * 0.26, r * 0.12, -angle - 0.7, 0, TAU);
+  c.ellipse(lx, ly, glowR * 0.22, glowR * 0.1, -angle - 0.7, 0, TAU);
   c.fill();
   c.restore();
 
-  if (SHOW_FACES && o.face !== false && r > 8) drawFace(c, SHAPE_CHAIN[tier], r, angle, o, color);
+  if (SHOW_FACES && o.face !== false && s * def.face.r > 3.5) {
+    c.save();
+    c.translate(def.face.x * s, def.face.y * s);
+    drawFace(c, def.face.r * s, angle, o, color);
+    c.restore();
+  }
   c.restore();
 }
 
-// Turns '#ff2e63' + 0.5 into 'rgba(255,46,99,0.5)'
-const alphaCache = {};
-function withAlpha(hex, a) {
-  const key = hex + a;
-  if (alphaCache[key]) return alphaCache[key];
-  const n = parseInt(hex.slice(1), 16);
-  return (alphaCache[key] = `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`);
-}
-
-// Eyes, cheeks and a mouth. Eyes follow the shape you're holding!
-function drawFace(c, def, r, angle, o, color) {
-  const spot = faceSpot(def);
-  const fy = spot.y * r, ex = spot.gap * r;
-  const er = Math.max(1.4, r * 0.14);
+// Eyes, cheeks and a mouth inside a face of radius R. Eyes follow the shape you're holding!
+function drawFace(c, R, angle, o, color) {
+  const ex = R * 0.48, eyeY = -R * 0.12;
+  const er = Math.max(1.3, R * 0.24);
   const ink = '#0a0614';                  // pupils
   const glow = tint(color, 0.7);          // neon lines for mouth and happy eyes
 
@@ -748,30 +905,30 @@ function drawFace(c, def, r, angle, o, color) {
   c.fillStyle = withAlpha(color, 0.45);
   for (const side of [-1, 1]) {
     c.beginPath();
-    c.ellipse(side * ex * 1.5, fy + r * 0.14, r * 0.1, r * 0.06, 0, 0, TAU);
+    c.ellipse(side * R * 0.85, R * 0.24, R * 0.16, R * 0.1, 0, 0, TAU);
     c.fill();
   }
 
   c.lineCap = 'round';
-  c.lineWidth = Math.max(1, r * 0.06);
+  c.lineWidth = Math.max(1, R * 0.1);
   c.strokeStyle = glow;
   for (const side of [-1, 1]) {
-    const x = side * ex, y = fy - r * 0.06;
+    const x = side * ex;
     if (o.mood === 'happy') {             // ^ ^
       c.beginPath();
-      c.arc(x, y + er * 0.4, er * 0.75, Math.PI * 1.15, Math.PI * 1.85);
+      c.arc(x, eyeY + er * 0.4, er * 0.75, Math.PI * 1.15, Math.PI * 1.85);
       c.stroke();
     } else if (o.blink) {                 // - -
       c.beginPath();
-      c.moveTo(x - er * 0.8, y); c.lineTo(x + er * 0.8, y);
+      c.moveTo(x - er * 0.8, eyeY); c.lineTo(x + er * 0.8, eyeY);
       c.stroke();
     } else {                              // o o
       const scared = o.mood === 'worried';
       c.fillStyle = '#fff';
-      c.beginPath(); c.arc(x, y, er * (scared ? 1.15 : 1), 0, TAU); c.fill();
+      c.beginPath(); c.arc(x, eyeY, er * (scared ? 1.15 : 1), 0, TAU); c.fill();
       c.fillStyle = ink;
       const pr = er * (scared ? 0.4 : 0.58);
-      const px = x + lookX * er * 0.4, py = y + lookY * er * 0.4;
+      const px = x + lookX * er * 0.4, py = eyeY + lookY * er * 0.4;
       c.beginPath(); c.arc(px, py, pr, 0, TAU); c.fill();
       c.fillStyle = '#fff';
       c.beginPath(); c.arc(px - pr * 0.35, py - pr * 0.35, pr * 0.35, 0, TAU); c.fill();
@@ -779,16 +936,14 @@ function drawFace(c, def, r, angle, o, color) {
   }
 
   // Mouth
-  const my = fy + r * 0.13;
+  const my = R * 0.3;
   if (o.mood === 'happy') {               // big open smile
     c.fillStyle = ink;
-    c.beginPath(); c.arc(0, my, r * 0.13, 0, Math.PI); c.closePath(); c.fill(); c.stroke();
-    c.fillStyle = '#ff5c8a';
-    c.beginPath(); c.arc(0, my + r * 0.08, r * 0.06, Math.PI, TAU); c.fill();
+    c.beginPath(); c.arc(0, my - R * 0.05, R * 0.24, 0, Math.PI); c.closePath(); c.fill(); c.stroke();
   } else if (o.mood === 'worried') {      // little "o"
-    c.beginPath(); c.arc(0, my + r * 0.05, r * 0.055, 0, TAU); c.stroke();
+    c.beginPath(); c.arc(0, my + R * 0.05, R * 0.1, 0, TAU); c.stroke();
   } else {                                // gentle smile
-    c.beginPath(); c.arc(0, my - r * 0.02, r * 0.1, Math.PI * 0.2, Math.PI * 0.8); c.stroke();
+    c.beginPath(); c.arc(0, my - R * 0.1, R * 0.2, Math.PI * 0.2, Math.PI * 0.8); c.stroke();
   }
 }
 
@@ -868,48 +1023,46 @@ function drawPowerUp(c, type, x, y, r, t) {
 
 // What color a shape is (depends on the mode)
 function colorOf(tier, colorIndex) {
-  return colorIndex === null || colorIndex === undefined ? SHAPE_CHAIN[tier].color : COLOR_PALETTE[colorIndex];
+  if (colorIndex !== null && colorIndex !== undefined) return COLOR_PALETTE[colorIndex];
+  if (tier === LAST && RAINBOW_FINAL) return rainbowHex(gameTime * 90);
+  return SHAPE_CHAIN[tier].color;
 }
 
 // Draws an "item" (a shape or power-up) - used for the held shape and the Next box
-function drawItem(c, item, x, y, scale = 1, look = null) {
+function drawItem(c, item, x, y, scale = 1, look = null, angle = 0) {
   if (item.kind === 'power') { drawPowerUp(c, item.power, x, y, POWERUP_RADIUS * scale, gameTime); return; }
-  const r = SHAPE_CHAIN[item.tier].radius * scale;
-  drawShape(c, item.tier, x, y, r, 0, colorOf(item.tier, item.color), { look });
-  if (item.sticky) drawGoo(c, x, y, r, gameTime, 1);
+  const s = SHAPE_DEFS[item.tier].size * scale;
+  drawShape(c, item.tier, x, y, s, angle, colorOf(item.tier, item.color), { look });
+  if (item.sticky) drawGoo(c, item.tier, x, y, s, angle, gameTime, 1);
 }
 
-// Sticky goo: a wobbly, glowing slime coat with drips hanging off the bottom
+// Sticky goo: a wobbly, glowing slime coat that follows the shape, with drips hanging off it
 const GOO = '#b6ff3b';
-function drawGoo(c, x, y, r, t, alpha) {
+function drawGoo(c, tier, x, y, s, angle, t, alpha) {
   c.save();
   c.globalAlpha *= alpha;
   c.translate(x, y);
-  // Wobbly blob outline
-  c.beginPath();
-  for (let i = 0; i <= 24; i++) {
-    const a = i / 24 * TAU;
-    const rr = r * (1.14 + 0.06 * Math.sin(a * 3 + t * 5) + 0.04 * Math.sin(a * 5 - t * 7));
-    const px = Math.cos(a) * rr, py = Math.sin(a) * rr;
-    i ? c.lineTo(px, py) : c.moveTo(px, py);
-  }
-  c.closePath();
-  c.fillStyle = withAlpha(GOO, 0.13);
+  c.save();
+  c.rotate(angle);
+  traceShape(c, tier, s * 1.06);
+  c.lineJoin = 'round';
+  c.fillStyle = withAlpha(GOO, 0.14);
   c.fill();
   c.globalCompositeOperation = 'lighter';
   c.strokeStyle = withAlpha(GOO, 0.3);
-  c.lineWidth = Math.max(4, r * 0.22);
+  c.lineWidth = Math.max(5, Math.min(s, 40) * (0.3 + 0.06 * Math.sin(t * 6)));
   c.stroke();
   c.strokeStyle = withAlpha(GOO, 0.85);
-  c.lineWidth = Math.max(1.5, r * 0.06);
+  c.lineWidth = Math.max(1.5, Math.min(s, 40) * 0.05);
   c.stroke();
-  // Drips that stretch and snap back
+  c.restore();
+  // Drips hang straight down from the three lowest corners (in world "down", even when spinning)
+  const corners = SHAPE_DEFS[tier].outline.map(p => rotatePoint(p[0] * s * 1.06, p[1] * s * 1.06, angle));
+  corners.sort((a, b) => b[1] - a[1]);
   c.fillStyle = withAlpha(GOO, 0.8);
-  for (const k of [-0.45, 0.1, 0.55]) {
-    const a = Math.PI / 2 + k;
-    const len = r * (0.18 + 0.14 * (0.5 + 0.5 * Math.sin(t * 3 + k * 9)));
-    const bx = Math.cos(a) * r * 1.12, by = Math.sin(a) * r * 1.12;
-    const dr = Math.max(1.5, r * 0.07);
+  corners.slice(0, 3).forEach(([bx, by], k) => {
+    const len = Math.min(s, 40) * (0.2 + 0.16 * (0.5 + 0.5 * Math.sin(t * 3 + k * 2.3)));
+    const dr = Math.max(1.5, Math.min(s, 40) * 0.07);
     c.beginPath();
     c.moveTo(bx - dr, by);
     c.lineTo(bx + dr, by);
@@ -917,7 +1070,7 @@ function drawGoo(c, x, y, r, t, alpha) {
     c.arc(bx, by + len, dr * 0.9, 0, Math.PI);
     c.closePath();
     c.fill();
-  }
+  });
   c.restore();
 }
 
@@ -926,12 +1079,12 @@ function drawGooStrands(c, b) {
   c.save();
   c.globalCompositeOperation = 'lighter';
   c.lineCap = 'round';
-  for (const l of b.links) {
-    const o = l.other;
-    const mx = (b.x + o.x) / 2, my = (b.y + o.y) / 2 + 8 + Math.sin(gameTime * 4 + b.id) * 3;
+  for (const link of b.links) {
+    const o = link.other.m.position, p = b.m.position;
+    const mx = (p.x + o.x) / 2, my = (p.y + o.y) / 2 + 8 + Math.sin(gameTime * 4 + b.id) * 3;
     c.strokeStyle = withAlpha(GOO, 0.25);
     c.lineWidth = 9;
-    c.beginPath(); c.moveTo(b.x, b.y); c.quadraticCurveTo(mx, my, o.x, o.y); c.stroke();
+    c.beginPath(); c.moveTo(p.x, p.y); c.quadraticCurveTo(mx, my, o.x, o.y); c.stroke();
     c.strokeStyle = withAlpha(GOO, 0.9);
     c.lineWidth = 2.5;
     c.stroke();
@@ -939,42 +1092,78 @@ function drawGooStrands(c, b) {
   c.restore();
 }
 
-// A splat of goo when a sticky shape grabs something
-function gooSplat(b, x, y) {
-  addFx({ type: 'ring', x, y, r: 4, r1: b.r * 1.3, color: GOO, t: 0, dur: 0.35, width: 4 });
-  for (let i = 0; i < 10; i++) {
-    const a = rand(0, TAU), sp = rand(60, 200);
-    addFx({ type: 'drop', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60, r: rand(1.5, 3.5), hue: 85, t: 0, life: rand(0.35, 0.7) });
-  }
-}
-
-function itemRadius(item) {
-  return item.kind === 'power' ? POWERUP_RADIUS : SHAPE_CHAIN[item.tier].radius;
-}
-
 
 /* =====================================================================
-   E. PHYSICS - every shape is treated as a circle (a "body")
+   E. PHYSICS - Matter.js does the real polygon collisions for us.
+   ---------------------------------------------------------------------
+   Every shape is a Matter "body" built from its convex pieces. Matter moves
+   the bodies, spins them, and pushes them apart when their real edges touch.
+   Our job: create the bodies, check which ones are touching, and react
+   (merge, glue, set off power-ups).
    ===================================================================== */
+if (!window.Matter) {
+  // No internet the first time? The physics engine couldn't load, so tell the player.
+  document.body.innerHTML = '<p style="max-width:420px;margin:auto;font:18px system-ui;color:#fff;text-align:center">' +
+    'Shape Drop needs an internet connection to load its physics engine (Matter.js). Connect and refresh the page.</p>';
+  throw new Error('Matter.js did not load');
+}
+const { Engine, Body, Bodies, Composite, Constraint, Vertices, Query } = Matter;
 
-// Makes a new body (a shape or power-up inside the box)
-function createBody(item, x, y) {
-  const r = itemRadius(item);
-  return {
+const engine = Engine.create({
+  gravity: { x: 0, y: GRAVITY / 1000 },   // Matter measures gravity in thousandths
+  positionIterations: 10,                 // more = steadier piles
+  velocityIterations: 8,
+});
+
+// The box: two walls and a floor. They're "static", which means nothing can move them.
+const wallHeight = CONTAINER_HEIGHT + 900;
+const leftWall = Bodies.rectangle(0, FLOOR_Y - wallHeight / 2, WALL_THICKNESS, wallHeight, { isStatic: true, label: 'wall', friction: 0.3 });
+const rightWall = Bodies.rectangle(0, FLOOR_Y - wallHeight / 2, WALL_THICKNESS, wallHeight, { isStatic: true, label: 'wall', friction: 0.3 });
+const floorBody = Bodies.rectangle(CENTER_X, FLOOR_Y + WALL_THICKNESS / 2, 2000, WALL_THICKNESS, { isStatic: true, label: 'floor', friction: 0.6 });
+function placeWalls() {
+  Body.setPosition(leftWall, { x: CENTER_X - containerWidth / 2 - WALL_THICKNESS / 2, y: FLOOR_Y - wallHeight / 2 });
+  Body.setPosition(rightWall, { x: CENTER_X + containerWidth / 2 + WALL_THICKNESS / 2, y: FLOOR_Y - wallHeight / 2 });
+}
+
+// Speeds: Matter counts in "pixels per 1/60th of a second", we like pixels per second
+function getVel(m) { const v = Body.getVelocity(m); return { x: v.x * 60, y: v.y * 60 }; }
+function setVel(m, vx, vy) { Body.setVelocity(m, { x: vx / 60, y: vy / 60 }); }
+
+// Builds a physics body for a shape from its convex pieces, centered at (x, y)
+function buildShapeBody(tier, x, y, scale = 1) {
+  const def = SHAPE_DEFS[tier], s = def.size * scale;
+  const parts = def.parts.map(piece => {
+    const verts = piece.map(([px, py]) => ({ x: x + px * s, y: y + py * s }));
+    Vertices.clockwiseSort(verts);
+    return Body.create({ position: Vertices.centre(verts), vertices: verts });
+  });
+  return Body.create({
+    parts,
+    label: 'shape',
+    friction: def.friction,
+    frictionStatic: def.grip,
+    restitution: BOUNCINESS,
+    frictionAir: 0.012,
+  });
+}
+
+// Puts a new shape or power-up into the box and returns our record of it
+function spawn(item, x, y, angle = 0, scale = 1) {
+  const m = item.kind === 'power'
+    ? Bodies.circle(x, y, POWERUP_RADIUS, { label: 'power', friction: 0.3, restitution: 0.2, density: 0.002 })
+    : buildShapeBody(item.tier, x, y, scale);
+  if (angle) Body.setAngle(m, angle);
+  const b = {
     id: nextId++,
+    m,                      // the Matter.js body (position, angle, speed live in here)
     kind: item.kind,        // 'shape' or 'power'
     tier: item.tier,        // position in SHAPE_CHAIN (shapes only)
     color: item.color,      // color number in Color Mode, otherwise null
     power: item.power,      // 'expand', 'wildcard', 'bomb' or 'shake' (power-ups only)
-    x, y,                   // position
-    vx: 0, vy: 0,           // velocity (speed + direction)
-    baseR: r,               // full size
-    r: r,                   // size right now (grows after a merge)
-    physFrom: 1,            // size it grows from (1 = already full size)
+    scale,                  // size right now (grows to 1 after a merge)
+    growFrom: scale,
     popFrom: 1,             // size the "boing" animation starts from
     anim: 99,               // seconds since it was born (99 = no birth animation)
-    angle: 0,               // rotation (just for looks)
-    squash: 0, squashV: 0,  // jelly wobble when it lands
     glitch: 0,              // glitch flicker timer
     happy: 0,               // happy-face timer
     blink: rand(1, 5),      // countdown to the next blink
@@ -986,182 +1175,96 @@ function createBody(item, x, y) {
     sticky: item.sticky ? STICKY_TIME : 0, // seconds of goo left (0 = not sticky)
     gooActive: false,       // true once the goo has touched something (the drying timer starts)
     pinned: false,          // true = glued to a wall or the floor (it won't move)
-    links: [],              // other shapes this sticky shape is glued to
+    links: [],              // glue joints to other shapes
   };
+  m.gameRef = b;            // so we can find our record from a Matter body
+  Composite.add(engine.world, m);
+  bodies.push(b);
+  return b;
 }
 
-// How easy a body is to push. Glued-down (pinned) bodies can't be pushed at all.
-function invMass(b) {
-  return b.pinned ? 0 : 1 / (b.r * b.r);
+// How far a body reaches from its center (for effects, blasts and warning rings)
+function reachOf(b) {
+  return b.kind === 'power' ? POWERUP_RADIUS : SHAPE_DEFS[b.tier].reach * SHAPE_DEFS[b.tier].size * b.scale;
 }
 
-// Moves the whole simulation forward by a tiny slice of time (dt seconds)
+// Takes a body out of the game (and cleans up any glue attached to it)
+function removeBody(b) {
+  if (b.dead) return;
+  b.dead = true;
+  Composite.remove(engine.world, b.m);
+  for (const other of bodies) {
+    other.links = other.links.filter(l => {
+      if (l.other !== b && other !== b) return true;
+      Composite.remove(engine.world, l.joint);
+      return false;
+    });
+  }
+}
+
+// Moves the whole simulation forward by one small step (dt seconds)
 function physicsStep(dt) {
   // Slide the walls toward their new width, and zoom the camera out to fit
   containerWidth += (targetContainerWidth - containerWidth) * Math.min(1, dt * 4);
   camZoom = Math.min(1, W / (containerWidth + SIDE_MARGIN * 2));
+  placeWalls();
 
-  // 1) Gravity + movement
   for (const b of bodies) {
     b.age += dt;
     b.anim += dt;
-    const g = b.anim < GROW_TIME ? smooth(b.anim / GROW_TIME) : 1;
-    b.r = b.baseR * (b.physFrom + (1 - b.physFrom) * g);  // grow smoothly after a merge
-    b.squashV += (-260 * b.squash - 16 * b.squashV) * dt; // jelly spring
-    b.squash += b.squashV * dt;
-    if (b.pinned) { b.vx = 0; b.vy = 0; continue; }   // glued in place
-    b.vy += GRAVITY * dt;
-    b.vx *= 0.999; b.vy *= 0.999;   // a tiny bit of air resistance
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
-    b.angle += (b.vx / b.r) * dt;   // roll as it moves sideways
-  }
-
-  // 2) Push overlapping shapes apart (a few times, so piles settle nicely)
-  for (let iter = 0; iter < SOLVER_ITERATIONS; iter++) {
-    for (let i = 0; i < bodies.length; i++) {
-      for (let j = i + 1; j < bodies.length; j++) collide(bodies[i], bodies[j]);
+    // A newly merged shape starts small and grows, gently pushing its neighbours aside
+    if (b.scale < 1) {
+      const next = Math.min(1, b.scale + (dt / GROW_TIME) * (1 - b.growFrom));
+      Body.scale(b.m, next / b.scale, next / b.scale);
+      b.scale = next;
     }
-    for (const b of bodies) if (b.links.length) pullGlue(b);
-    for (const b of bodies) keepInside(b);
+    // Speed limit, so thin shapes can't tunnel through each other
+    if (!b.m.isStatic) {
+      const v = getVel(b.m), speed = Math.hypot(v.x, v.y);
+      if (speed > MAX_FALL_SPEED) setVel(b.m, v.x * MAX_FALL_SPEED / speed, v.y * MAX_FALL_SPEED / speed);
+    }
   }
 
-  // 3) Handle merges and power-ups that happened this step
+  Engine.update(engine, dt * 1000);   // Matter does the real work here
+
+  // Look at every pair of things that are touching right now
+  for (const pair of engine.pairs.list) {
+    if (!pair.isActive) continue;
+    const A = pair.bodyA.parent, B = pair.bodyB.parent;
+    const a = A.gameRef, b = B.gameRef;
+    if (a && b) checkContact(a, b);
+    else if (a) touchedBox(a, B.label);
+    else if (b) touchedBox(b, A.label);
+  }
+
   processMerges();
   processPowers();
   bodies = bodies.filter(b => !b.dead);
 }
 
-// If two bodies overlap: push them apart and bounce them off each other
-function collide(a, b) {
-  if (a.dead || b.dead) return;
-  const dx = b.x - a.x, dy = b.y - a.y;
-  const minDist = a.r + b.r;
-  const distSq = dx * dx + dy * dy;
-  if (distSq >= minDist * minDist || distSq === 0) return; // not touching
-
-  checkContact(a, b);   // should they merge? is one a power-up?
-  if (a.sticky > 0 && b.kind === 'shape') glue(a, b);   // sticky goo grabs what it touches
-  if (b.sticky > 0 && a.kind === 'shape') glue(b, a);
-
-  const dist = Math.sqrt(distSq);
-  const nx = dx / dist, ny = dy / dist;   // direction from a to b
-  // Bigger shapes are "heavier" and get pushed less (inverse mass = 1 / size²)
-  const ima = invMass(a), imb = invMass(b), imSum = ima + imb;
-  if (imSum === 0) return;   // two glued-down shapes: nothing to push
-
-  const push = ((minDist - dist) * 0.8) / imSum;
-  a.x -= nx * push * ima; a.y -= ny * push * ima;
-  b.x += nx * push * imb; b.y += ny * push * imb;
-
-  // Bounce if they're moving toward each other
-  const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
-  const vn = rvx * nx + rvy * ny;
-  if (vn < 0) {
-    const j = (-(1 + BOUNCINESS) * vn) / imSum;
-    a.vx -= j * nx * ima; a.vy -= j * ny * ima;
-    b.vx += j * nx * imb; b.vy += j * ny * imb;
-    // Friction along the touching surfaces
-    const tx = -ny, ty = nx;
-    const jt = (-(rvx * tx + rvy * ty) / imSum) * FRICTION;
-    a.vx -= jt * tx * ima; a.vy -= jt * ty * ima;
-    b.vx += jt * tx * imb; b.vy += jt * ty * imb;
-    // Hard hits make both shapes wobble like jelly
-    if (vn < -140) {
-      const s = Math.min(0.18, -vn / 4000);
-      a.squash = Math.max(a.squash, s);
-      b.squash = Math.max(b.squash, s);
-    }
+// A body touched a wall or the floor
+function touchedBox(b, label) {
+  if (b.dead) return;
+  // Everything except the Wildcard goes off when it hits the box
+  if (b.kind === 'power' && !b.triggered && b.power !== 'wildcard') {
+    b.triggered = true;
+    powerQueue.push({ power: b, other: null });
   }
-}
-
-// Keeps a body inside the walls and above the floor
-function keepInside(b) {
-  const left = CENTER_X - containerWidth / 2;
-  const right = CENTER_X + containerWidth / 2;
-  if (b.pinned) return;
-  const touchingWall = b.x - b.r < left + 0.5 || b.x + b.r > right - 0.5;
-  if (b.x - b.r < left)  { b.x = left + b.r;  if (b.vx < 0) b.vx = -b.vx * BOUNCINESS; }
-  if (b.x + b.r > right) { b.x = right - b.r; if (b.vx > 0) b.vx = -b.vx * BOUNCINESS; }
-  // Sticky goo glues to a wall (once it has landed on something) or to the floor
-  if (b.sticky > 0 && ((touchingWall && b.gooActive) || b.y + b.r >= FLOOR_Y)) pin(b);
-  if (b.y + b.r > FLOOR_Y) {
-    b.y = FLOOR_Y - b.r;
-    if (b.vy > 140) b.squash = Math.max(b.squash, Math.min(0.2, b.vy / 3500));
-    if (b.vy > 0) b.vy = -b.vy * BOUNCINESS;
-    b.vx *= 0.99;
-    // Everything except the Wildcard goes off when it hits the floor
-    if (b.kind === 'power' && !b.triggered && b.power !== 'wildcard') {
-      b.triggered = true;
-      powerQueue.push({ power: b, other: null });
-    }
-  }
-}
-
-
-// ---- Sticky goo ----
-
-// Glue a sticky shape to another shape it touched
-function glue(s, other) {
-  s.gooActive = true;
-  if (s.links.length >= STICKY_MAX_LINKS || s.links.some(l => l.other === other)) return;
-  s.links.push({ other, len: Math.max(s.r + other.r, Math.hypot(other.x - s.x, other.y - s.y)) });
-  if (s.links.length === 1) { sounds.splat(); gooSplat(s, other.x, other.y); }
-}
-
-// Glue a sticky shape to the wall or floor it touched
-function pin(b) {
-  b.gooActive = true;
-  b.pinned = true;
-  b.vx = b.vy = 0;
-  sounds.splat();
-  gooSplat(b, b.x, b.y + b.r);
-}
-
-// Goo strands pull glued shapes back to their glued distance (like stretchy slime)
-function pullGlue(s) {
-  s.links = s.links.filter(l => !l.other.dead);
-  for (const l of s.links) {
-    const o = l.other;
-    const dx = o.x - s.x, dy = o.y - s.y;
-    const d = Math.hypot(dx, dy) || 1;
-    const ims = invMass(s), imo = invMass(o), sum = ims + imo;
-    if (sum === 0) continue;
-    const nx = dx / d, ny = dy / d;
-    const stretch = (d - l.len) * 0.5 / sum;          // how far to pull them together
-    s.x += nx * stretch * ims; s.y += ny * stretch * ims;
-    o.x -= nx * stretch * imo; o.y -= ny * stretch * imo;
-    // Make them move together along the strand (so the goo doesn't boing forever)
-    const rv = (o.vx - s.vx) * nx + (o.vy - s.vy) * ny;
-    const j = rv * 0.5 / sum;
-    s.vx += nx * j * ims; s.vy += ny * j * ims;
-    o.vx -= nx * j * imo; o.vy -= ny * j * imo;
-  }
-}
-
-// The goo dries up (or gets cleared): the shape becomes a normal shape again
-function unstick(b, quiet = false) {
-  if (!b.sticky && !b.pinned && !b.links.length) return;
-  b.sticky = 0;
-  b.pinned = false;
-  b.links = [];
-  if (!quiet) {
-    for (let i = 0; i < 8; i++) {
-      const a = rand(0, TAU);
-      addFx({ type: 'drop', x: b.x + Math.cos(a) * b.r, y: b.y + Math.sin(a) * b.r, vx: Math.cos(a) * 60, vy: Math.sin(a) * 60,
-              r: rand(1.5, 3), hue: 90, t: 0, life: rand(0.4, 0.7) });
-    }
-  }
+  // Sticky goo glues to the floor, or to a wall once it has landed on something
+  if (b.sticky > 0 && !b.pinned && (label === 'floor' || (label === 'wall' && b.gooActive))) pin(b);
 }
 
 
 /* =====================================================================
-   F. MERGING & POWER-UPS
+   F. MERGING, STICKY GOO & POWER-UPS
    ===================================================================== */
 
 // Called when two bodies touch. Decides if something special happens.
 function checkContact(a, b) {
+  if (a.dead || b.dead) return;
   if (a.kind === 'shape' && b.kind === 'shape') {
+    if (a.sticky > 0) glue(a, b);          // sticky goo grabs what it touches
+    if (b.sticky > 0) glue(b, a);
     if (a.merging || b.merging || a.tier !== b.tier) return;
     if (colorMode && a.color !== b.color) return;   // Color Mode: colors must match too
     a.merging = b.merging = true;
@@ -1176,6 +1279,54 @@ function checkContact(a, b) {
   powerQueue.push({ power: p, other });
 }
 
+// ---- Sticky goo ----
+
+// Glue a sticky shape to another shape it touched, with a stretchy joint where they meet
+function glue(s, other) {
+  s.gooActive = true;
+  if (s.links.length >= STICKY_MAX_LINKS || s.links.some(l => l.other === other) ||
+      other.links.some(l => l.other === s)) return;
+  const pa = s.m.position, pb = other.m.position;
+  const mid = { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 };       // roughly where they touch
+  const joint = Constraint.create({
+    bodyA: s.m, bodyB: other.m,
+    pointA: { x: mid.x - pa.x, y: mid.y - pa.y },
+    pointB: { x: mid.x - pb.x, y: mid.y - pb.y },
+    length: 0, stiffness: 0.25, damping: 0.05,
+  });
+  Composite.add(engine.world, joint);
+  s.links.push({ other, joint });
+  if (s.links.length === 1) { sounds.splat(); gooSplat(s, mid.x, mid.y); }
+}
+
+// Glue a sticky shape to the wall or floor: it becomes "static" and can't move
+function pin(b) {
+  b.gooActive = true;
+  b.pinned = true;
+  Body.setStatic(b.m, true);
+  sounds.splat();
+  gooSplat(b, b.m.position.x, b.m.position.y + reachOf(b) * 0.5);
+}
+
+// The goo dries up (or gets knocked off): the shape becomes a normal shape again
+function unstick(b, quiet = false) {
+  if (!b.sticky && !b.pinned && !b.links.length) return;
+  b.sticky = 0;
+  if (b.pinned) { b.pinned = false; Body.setStatic(b.m, false); }
+  for (const l of b.links) Composite.remove(engine.world, l.joint);
+  b.links = [];
+  if (!quiet) {
+    const p = b.m.position, r = reachOf(b) * 0.7;
+    for (let i = 0; i < 8; i++) {
+      const a = rand(0, TAU);
+      addFx({ type: 'drop', x: p.x + Math.cos(a) * r, y: p.y + Math.sin(a) * r, vx: Math.cos(a) * 60, vy: Math.sin(a) * 60,
+              r: rand(1.5, 3), hue: 90, t: 0, life: rand(0.4, 0.7) });
+    }
+  }
+}
+
+// ---- Merging ----
+
 // Keeps track of combos (merges that happen quickly one after another)
 function bumpCombo() {
   comboCount = comboTimer > 0 ? comboCount + 1 : 1;
@@ -1185,44 +1336,47 @@ function bumpCombo() {
   return Math.min(MAX_COMBO_MULTIPLIER, 1 + (comboCount - 1) * COMBO_BONUS);   // points multiplier
 }
 
+// Makes a brand-new, bigger shape where two shapes merged (it grows in with a "boing")
+function birth(tier, color, x, y, angle, vx, vy, age) {
+  const growFrom = clamp(SHAPE_DEFS[tier - 1].size / SHAPE_DEFS[tier].size, 0.45, 0.8);
+  const nb = spawn({ kind: 'shape', tier, color }, x, y, angle, growFrom);
+  setVel(nb.m, vx, vy - 60);   // a little hop
+  nb.popFrom = 0.45;
+  nb.anim = 0;
+  nb.glitch = FX >= 2 ? GLITCH_TIME : 0;
+  nb.happy = 1.2;
+  nb.age = age;
+  return nb;
+}
+
 // Turns each pair of matching shapes into the next shape up
 function processMerges() {
-  const born = [];
   for (const [a, b] of mergeQueue) {
     if (a.dead || b.dead) continue;
-    a.dead = b.dead = true;
-    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const pa = a.m.position, pb = b.m.position;
+    const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+    const va = getVel(a.m), vb = getVel(b.m);
     const mult = bumpCombo();
 
     if (a.tier < LAST) {
       // A normal merge: make the next shape in the chain
       const tier = a.tier + 1;
-      const nb = createBody({ kind: 'shape', tier, color: a.color }, mx, my);
-      nb.vx = (a.vx + b.vx) / 2;
-      nb.vy = (a.vy + b.vy) / 2 - 60;   // a little hop
-      nb.physFrom = a.baseR / nb.baseR; // grows from the old size...
-      nb.popFrom = 0.45;                // ...with a springy "boing"
-      nb.anim = 0;
-      nb.glitch = FX >= 2 ? GLITCH_TIME : 0;
-      nb.happy = 1.2;
-      nb.angle = rand(-0.3, 0.3);
-      nb.age = Math.max(a.age, b.age);
-      born.push(nb);
-
+      removeBody(a); removeBody(b);
+      const nb = birth(tier, a.color, mx, my, a.m.angle, (va.x + vb.x) / 2, (va.y + vb.y) / 2, Math.max(a.age, b.age));
       // The two old shapes explode, and their pieces get sucked into the new one
       shatter(a, nb);
       shatter(b, nb);
       mergeBurst(nb, tier, colorOf(tier, a.color));
-      const pts = Math.round(SHAPE_CHAIN[tier].points * mult);
-      addScore(pts, mx, my - nb.baseR * 0.6);
-      if (comboCount >= 2) floatText(mx, my - nb.baseR - 22, `COMBO x${comboCount}!`, 18 + comboCount * 2, '#f5ff1f');
+      addScore(Math.round(SHAPE_CHAIN[tier].points * mult), mx, my - reachOf(nb) * 0.5);
+      if (comboCount >= 2) floatText(mx, my - reachOf(nb) - 22, `COMBO x${comboCount}!`, 18 + comboCount * 2, '#f5ff1f');
       sounds.merge(tier, comboCount);
-      if (tier >= 6) { slowMo = 0.35; screenGlitch = 0.3; }
+      if (tier >= 8) { slowMo = 0.35; screenGlitch = 0.3; }
       reachTier(tier);
     } else {
-      // Two Suns: SUPERNOVA! They vanish for a huge bonus.
+      // Two of the last shape: SUPERNOVA! They vanish for a huge bonus.
       shatter(a, null, 1.6);
       shatter(b, null, 1.6);
+      removeBody(a); removeBody(b);
       supernovaBurst(mx, my, colorOf(a.tier, a.color));
       const pts = Math.round(MAX_MERGE_BONUS * mult);
       addScore(pts, mx, my);
@@ -1233,7 +1387,6 @@ function processMerges() {
     }
   }
   mergeQueue = [];
-  bodies.push(...born);
 }
 
 // Sets off power-ups that touched something
@@ -1245,26 +1398,25 @@ function processPowers() {
       explode(p, other);
 
     } else if (p.power === 'expand') {
-      p.dead = true;
+      popPower(p, '#34e89e');
+      removeBody(p);
       if (expansions < MAX_EXPANSIONS) {
         expansions++;
         targetContainerWidth += CONTAINER_EXPAND_AMOUNT;
       }
-      popPower(p, '#34e89e');
       wallSparkles();
       showBanner('BIGGER BOX!', 'more room to play', '#34e89e');
       sounds.expand();
 
     } else if (p.power === 'shake') {
-      p.dead = true;
       popPower(p, '#ff9f1c');
+      removeBody(p);
       for (const b of bodies) {
-        if (b.dead || b === p) continue;
-        unstick(b);                                 // the jolt knocks all goo loose
-        const k = Math.sqrt(30 / b.baseR);          // small shapes jump higher
-        b.vx += rand(-260, 260) * k;
-        b.vy -= rand(250, 520) * k;
-        b.squash = 0.2;
+        if (b.dead) continue;
+        unstick(b);                                          // the jolt knocks all goo loose
+        const v = getVel(b.m), k = b.kind === 'power' ? 1 : Math.sqrt(40 / SHAPE_DEFS[b.tier].size);
+        setVel(b.m, v.x + rand(-240, 240) * k, v.y - rand(280, 560) * k);
+        Body.setAngularVelocity(b.m, rand(-0.25, 0.25));    // and gets a spin, to unhook stuck corners
       }
       shake = Math.max(shake, 12);
       showBanner('SHAKE UP!', 'the pile gets jolted', '#ff9f1c');
@@ -1272,32 +1424,26 @@ function processPowers() {
 
     } else if (p.power === 'wildcard') {
       if (!other || other.dead || other.merging) { p.triggered = false; continue; } // try again later
-      p.dead = true;
       popPower(p, '#ffffff');
+      removeBody(p);
       const mult = bumpCombo();
+      const pos = other.m.position;
       if (other.tier < LAST) {
         // Upgrade the touched shape to the next one up, right where it is
-        unstick(other, true);                 // the upgrade cleans off any goo
-        const ghost = { ...other };           // a copy of the old shape, to shatter
-        other.tier++;
-        const oldR = other.baseR;
-        other.baseR = SHAPE_CHAIN[other.tier].radius;
-        other.physFrom = oldR / other.baseR;
-        other.popFrom = 0.5;
-        other.anim = 0;
-        other.glitch = FX >= 2 ? GLITCH_TIME : 0;
-        other.happy = 1.2;
-        shatter(ghost, other);
-        mergeBurst(other, other.tier, colorOf(other.tier, other.color));
-        addScore(Math.round(SHAPE_CHAIN[other.tier].points * mult), other.x, other.y - other.baseR * 0.6);
-        floatText(other.x, other.y - other.baseR - 22, 'WILD!', 22, '#ffffff');
-        sounds.merge(other.tier, comboCount);
-        reachTier(other.tier);
+        const v = getVel(other.m);
+        removeBody(other);
+        const nb = birth(other.tier + 1, other.color, pos.x, pos.y, other.m.angle, v.x, v.y, other.age);
+        shatter(other, nb);
+        mergeBurst(nb, nb.tier, colorOf(nb.tier, nb.color));
+        addScore(Math.round(SHAPE_CHAIN[nb.tier].points * mult), pos.x, pos.y - reachOf(nb) * 0.5);
+        floatText(pos.x, pos.y - reachOf(nb) - 22, 'WILD!', 22, '#ffffff');
+        sounds.merge(nb.tier, comboCount);
+        reachTier(nb.tier);
       } else {
-        other.dead = true;
         shatter(other, null, 1.6);
-        supernovaBurst(other.x, other.y, colorOf(other.tier, other.color));
-        addScore(Math.round(MAX_MERGE_BONUS * mult), other.x, other.y);
+        removeBody(other);
+        supernovaBurst(pos.x, pos.y, colorOf(other.tier, other.color));
+        addScore(Math.round(MAX_MERGE_BONUS * mult), pos.x, pos.y);
         showBanner('SUPERNOVA!', 'wildcard bonus', '#f5ff1f');
         sounds.supernova();
         slowMo = 0.6;
@@ -1309,22 +1455,22 @@ function processPowers() {
 
 // Bomb: removes the shape it hit plus anything close by, and shoves the rest away
 function explode(p, hit) {
-  p.dead = true;
+  const at = { x: p.m.position.x, y: p.m.position.y };
+  removeBody(p);
   for (const b of bodies) {
-    if (b === p || b.dead) continue;
-    const dx = b.x - p.x, dy = b.y - p.y;
+    if (b.dead) continue;
+    const pos = b.m.position;
+    const dx = pos.x - at.x, dy = pos.y - at.y;
     const d = Math.hypot(dx, dy) || 1;
-    if (b === hit || d - b.r < BOMB_RADIUS) {
-      b.dead = true;
+    if (b === hit || d - reachOf(b) * 0.7 < BOMB_RADIUS) {
       shatter(b, null, 1.5);
-    } else if (d < BOMB_RADIUS * 3) {
-      const strength = 750 * (1 - d / (BOMB_RADIUS * 3));
-      b.vx += (dx / d) * strength;
-      b.vy += (dy / d) * strength;
-      b.squash = 0.2;
+      removeBody(b);
+    } else if (d < BOMB_RADIUS * 3 && !b.m.isStatic) {
+      const strength = 750 * (1 - d / (BOMB_RADIUS * 3)), v = getVel(b.m);
+      setVel(b.m, v.x + (dx / d) * strength, v.y + (dy / d) * strength);
     }
   }
-  bombBurst(p.x, p.y);
+  bombBurst(at.x, at.y);
   showBanner('BOOM!', '', '#ff9f43');
   shake = Math.max(shake, 16);
   screenGlitch = 0.2;
@@ -1344,70 +1490,64 @@ function addFx(e) {
   if (fx.length > 1000) fx.splice(0, fx.length - 1000);
 }
 
-// Breaks a shape into wedge-shaped shards that burst outward.
+// Breaks a shape into shards that burst outward. The shards are cut from the
+// shape's real physics pieces, so they fit together exactly like the shape did.
 // If "home" is given, most shards get sucked back into that new shape.
 function shatter(b, home, power = 1) {
   if (b.kind !== 'shape') { popPower(b, '#ffffff'); return; }
   const color = colorOf(b.tier, b.color);
-  if (FX === 0) { sparks(b.x, b.y, color, 8, 250); return; }
+  const center = b.m.position, bv = getVel(b.m);
+  if (FX === 0) { sparks(center.x, center.y, color, 8, 250); return; }
 
-  // Add in-between points so even a triangle breaks into plenty of pieces
-  let outline = OUTLINES[b.tier];
-  while (outline.length < 9) {
-    const more = [];
-    outline.forEach((p, i) => {
-      const q = outline[(i + 1) % outline.length];
-      more.push(p, [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]);
-    });
-    outline = more;
-  }
-  const n = outline.length;
-  const step = Math.max(1, Math.round(n / (FX >= 2 ? 10 : 6)));
-
-  for (let i = 0; i < n; i += step) {
-    // A wedge from the center out to a slice of the edge
-    const pts = [[0, 0]];
-    for (let k = 0; k <= step; k++) {
-      const p = outline[(i + k) % n];
-      pts.push(rotatePoint(p[0] * b.r, p[1] * b.r, b.angle));
+  const pieces = b.m.parts.length > 1 ? b.m.parts.slice(1) : [b.m];
+  const wedgesPerPiece = clamp(Math.round((FX >= 2 ? 12 : 7) / pieces.length), 1, 6);
+  for (const piece of pieces) {
+    const verts = piece.vertices, n = verts.length;
+    const wedges = Math.min(n > 6 ? Math.max(wedgesPerPiece, 5) : wedgesPerPiece, n);   // big round pieces always crack into wedges
+    const step = Math.ceil(n / wedges);
+    for (let i = 0; i < n; i += step) {
+      // A wedge from the piece's middle out to a slice of its edge (a whole piece if wedges = 1)
+      const pts = wedges === 1 ? verts.map(v => [v.x, v.y]) : [[piece.position.x, piece.position.y]];
+      if (wedges > 1) for (let k = 0; k <= step; k++) { const v = verts[(i + k) % n]; pts.push([v.x, v.y]); }
+      const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+      const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+      const dx = cx - center.x, dy = cy - center.y, d = Math.hypot(dx, dy) || 1;
+      const speed = rand(200, 460) * power;
+      addFx({
+        type: 'shard',
+        x: cx, y: cy,
+        vx: dx / d * speed + bv.x * 0.3,
+        vy: dy / d * speed + bv.y * 0.3 - 80,
+        a: 0, va: rand(-14, 14),
+        pts: pts.map(p => [p[0] - cx, p[1] - cy]),
+        color,
+        t: 0,
+        homeAt: rand(0.12, 0.26),                            // when the suction starts
+        home: home && Math.random() < 0.72 ? home : null,    // most pieces fly home
+        scale: 1,
+      });
+      if (wedges === 1) break;
     }
-    const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
-    const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
-    const d = Math.hypot(cx, cy) || 1;
-    const speed = rand(200, 460) * power;
-    addFx({
-      type: 'shard',
-      x: b.x + cx, y: b.y + cy,
-      vx: cx / d * speed + b.vx * 0.3,
-      vy: cy / d * speed + b.vy * 0.3 - 80,
-      a: 0, va: rand(-14, 14),
-      pts: pts.map(p => [p[0] - cx, p[1] - cy]),
-      color,
-      t: 0,
-      homeAt: rand(0.12, 0.26),                            // when the suction starts
-      home: home && Math.random() < 0.72 ? home : null,    // most pieces fly home
-      scale: 1,
-    });
   }
 
   // Tiny copies of the shape itself go flying like confetti
   const minis = FX >= 2 ? 5 : 2;
+  const def = SHAPE_DEFS[b.tier];
   for (let i = 0; i < minis; i++) {
     const a = rand(0, TAU), s = rand(150, 380) * power;
-    addFx({ type: 'mini', tier: b.tier, color, x: b.x, y: b.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 200,
-            a: rand(0, TAU), va: rand(-10, 10), r: Math.max(4, b.baseR * rand(0.16, 0.26)), t: 0, life: rand(0.9, 1.4) });
+    addFx({ type: 'mini', tier: b.tier, color, x: center.x, y: center.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 200,
+            a: rand(0, TAU), va: rand(-10, 10), s: Math.max(4, def.size * rand(0.16, 0.26)), t: 0, life: rand(0.9, 1.4) });
   }
 }
 
 // The celebration around a newly born shape
 function mergeBurst(nb, tier, color) {
-  const r = nb.baseR;
-  addFx({ type: 'flash', x: nb.x, y: nb.y, r: r * 2.4, color, t: 0, dur: 0.28 });
-  if (FX >= 1) addFx({ type: 'bubble', follow: nb, x: nb.x, y: nb.y, r0: r * 0.95, r1: r * 1.55, t: 0, dur: 0.3, hue: rand(0, 360) });
-  addFx({ type: 'ring', x: nb.x, y: nb.y, r: r * 0.8, r1: r * 2.3, color, t: 0, dur: 0.45, width: 5 });
-  sparks(nb.x, nb.y, tint(color, 0.5), 8 + tier * 2, 260 + tier * 30);
-  if (tier >= 4) shake = Math.max(shake, tier * 1.1);
-  nb.squash = -0.15;   // stretch tall as it's born
+  const r = SHAPE_DEFS[tier].reach * SHAPE_DEFS[tier].size, p = nb.m.position;
+  addFx({ type: 'flash', x: p.x, y: p.y, r: r * 2.2, color, t: 0, dur: 0.28 });
+  if (FX >= 1) addFx({ type: 'bubble', follow: nb, x: p.x, y: p.y, r0: r * 0.85, r1: r * 1.35, t: 0, dur: 0.3, hue: rand(0, 360) });
+  addFx({ type: 'ring', x: p.x, y: p.y, r: r * 0.7, r1: r * 2.1, color, t: 0, dur: 0.45, width: 5 });
+  sparks(p.x, p.y, tint(color, 0.5), 8 + tier * 2, 260 + tier * 25);
+  if (tier >= 5) shake = Math.max(shake, tier * 0.9);
 }
 
 // Soap-bubble droplets flying off a popped bubble
@@ -1431,10 +1571,11 @@ function sparks(x, y, color, count, speed) {
 
 // A power-up orb bursting open
 function popPower(p, color) {
-  addFx({ type: 'flash', x: p.x, y: p.y, r: 70, color, t: 0, dur: 0.3 });
-  addFx({ type: 'ring', x: p.x, y: p.y, r: 10, r1: 80, color, t: 0, dur: 0.4, width: 4 });
-  sparks(p.x, p.y, color, 22, 380);
-  if (FX >= 1) bubbleDroplets(p.x, p.y, p.r, 12, rand(0, 360));
+  const { x, y } = p.m.position;
+  addFx({ type: 'flash', x, y, r: 70, color, t: 0, dur: 0.3 });
+  addFx({ type: 'ring', x, y, r: 10, r1: 80, color, t: 0, dur: 0.4, width: 4 });
+  sparks(x, y, color, 22, 380);
+  if (FX >= 1) bubbleDroplets(x, y, POWERUP_RADIUS, 12, rand(0, 360));
 }
 
 function bombBurst(x, y) {
@@ -1467,6 +1608,15 @@ function wallSparkles() {
   }
 }
 
+// A splat of goo when a sticky shape grabs something
+function gooSplat(b, x, y) {
+  addFx({ type: 'ring', x, y, r: 4, r1: reachOf(b), color: GOO, t: 0, dur: 0.35, width: 4 });
+  for (let i = 0; i < 10; i++) {
+    const a = rand(0, TAU), sp = rand(60, 200);
+    addFx({ type: 'drop', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60, r: rand(1.5, 3.5), hue: 85, t: 0, life: rand(0.35, 0.7) });
+  }
+}
+
 // Floating "+10" and "COMBO" texts (they live inside the game world)
 function floatText(x, y, text, size, color) {
   addFx({ type: 'text', x, y, text, size, color, t: 0, dur: 1.1 });
@@ -1487,11 +1637,12 @@ function updateFx(dt) {
         const homing = e.home && !e.home.dead && e.t > e.homeAt;
         if (homing) {
           // Suction! Pulled toward the new shape and shrinking as it arrives
+          const hp = e.home.m.position;
           const k = Math.min(1, dt * (8 + (e.t - e.homeAt) * 40));
-          e.x += (e.home.x - e.x) * k;
-          e.y += (e.home.y - e.y) * k;
+          e.x += (hp.x - e.x) * k;
+          e.y += (hp.y - e.y) * k;
           e.scale *= Math.pow(0.08, dt);
-          if (Math.hypot(e.home.x - e.x, e.home.y - e.y) < e.home.r * 0.3 || e.scale < 0.25) e.done = true;
+          if (Math.hypot(hp.x - e.x, hp.y - e.y) < reachOf(e.home) * 0.25 || e.scale < 0.25) e.done = true;
         } else {
           const drag = Math.pow(e.home ? 0.02 : 0.4, dt);   // homing shards brake hard first
           e.vx *= drag; e.vy *= drag;
@@ -1506,11 +1657,11 @@ function updateFx(dt) {
         e.vy += 900 * dt;
         e.x += e.vx * dt; e.y += e.vy * dt;
         e.a += e.va * dt;
-        if (e.y + e.r > FLOOR_Y && e.vy > 0) { e.y = FLOOR_Y - e.r; e.vy *= -0.5; e.vx *= 0.7; } // bounce off the floor
+        if (e.y + e.s > FLOOR_Y && e.vy > 0) { e.y = FLOOR_Y - e.s; e.vy *= -0.5; e.vx *= 0.7; } // bounce off the floor
         if (e.t > e.life) e.done = true;
         break;
       case 'bubble':
-        if (e.follow && !e.follow.dead) { e.x = e.follow.x; e.y = e.follow.y; }
+        if (e.follow && !e.follow.dead) { e.x = e.follow.m.position.x; e.y = e.follow.m.position.y; }
         if (e.t >= e.dur) {        // POP!
           e.done = true;
           bubbleDroplets(e.x, e.y, e.r1, FX >= 2 ? 18 : 10, e.hue);
@@ -1585,7 +1736,7 @@ function drawFx(c) {
       case 'mini':
         c.save();
         c.globalAlpha = clamp((e.life - e.t) * 3, 0, 1);
-        drawShape(c, e.tier, e.x, e.y, e.r, e.a, e.color, { face: false });
+        drawShape(c, e.tier, e.x, e.y, e.s, e.a, e.color, { face: false });
         c.restore();
         break;
       case 'bubble': {
@@ -1714,7 +1865,7 @@ function drawFx(c) {
 
 
 /* =====================================================================
-   H. GAME FLOW - picking shapes, dropping, scoring, game over
+   H. GAME FLOW - picking shapes, dropping, rotating, scoring, game over
    ===================================================================== */
 
 // Picks the next thing to drop: usually a small shape, sometimes a power-up
@@ -1744,20 +1895,32 @@ function pickPowerType() {
   return null;
 }
 
+// How far the held item sticks out to the left/right at its current angle
+function heldHalfWidth() {
+  if (!currentItem) return 10;
+  if (currentItem.kind === 'power') return POWERUP_RADIUS;
+  const def = SHAPE_DEFS[currentItem.tier], c = Math.cos(heldAngle), s = Math.sin(heldAngle);
+  return Math.max(...def.outline.map(p => Math.abs(p[0] * c - p[1] * s))) * def.size;
+}
+
 // Keeps the held shape between the walls
 function clampHeldX() {
-  const r = currentItem ? itemRadius(currentItem) : 10;
-  heldX = clamp(heldX, CENTER_X - containerWidth / 2 + r, CENTER_X + containerWidth / 2 - r);
+  const hw = heldHalfWidth();
+  heldX = clamp(heldX, CENTER_X - containerWidth / 2 + hw, CENTER_X + containerWidth / 2 - hw);
+}
+
+// Turn the held shape (dir = 1 clockwise, -1 counter-clockwise)
+function rotateHeld(dir = 1) {
+  if (state !== 'playing' || !currentItem || currentItem.kind === 'power') return;
+  heldAngle += dir * ROTATE_STEP * Math.PI / 180;
+  sounds.rotate();
 }
 
 // Drop the held shape into the box
 function drop() {
   if (state !== 'playing' || dropCooldown > 0 || !currentItem) return;
   clampHeldX();
-  const b = createBody(currentItem, heldX, DROP_Y);
-  b.angle = rand(-0.2, 0.2);
-  b.squash = -0.12;          // stretch as it falls
-  bodies.push(b);
+  spawn(currentItem, heldX, DROP_Y, heldAngle);
   currentItem = null;
   dropCooldown = DROP_COOLDOWN;
   dropsCount++;
@@ -1782,12 +1945,13 @@ function addScore(points, x, y) {
 function reachTier(tier) {
   if (tier <= maxTierReached) return;
   maxTierReached = tier;
-  if (tier >= 4) showBanner('NEW SHAPE!', SHAPE_CHAIN[tier].name, SHAPE_CHAIN[tier].color);
+  if (tier >= 5) showBanner('NEW SHAPE!', SHAPE_CHAIN[tier].name, colorOf(tier, null));
   buildKey(true);
 }
 
-// High scores are saved in this browser (one for each mode)
-function highScoreKey() { return 'shapeDrop2_best_' + (colorMode ? 'color' : 'classic'); }
+// High scores are saved in this browser (one for each mode).
+// "shapeDrop3" because polygon scores aren't comparable with the old circle version.
+function highScoreKey() { return 'shapeDrop3_best_' + (colorMode ? 'color' : 'classic'); }
 function loadHighScore() {
   try { highScore = parseInt(localStorage.getItem(highScoreKey()), 10) || 0; } catch (e) { highScore = 0; }
   document.getElementById('best').textContent = highScore;
@@ -1801,6 +1965,7 @@ function saveHighScore() {
 function updateGame(dt) {
   if (keysDown['ArrowLeft'] || keysDown['a']) heldX -= KEY_MOVE_SPEED * dt;
   if (keysDown['ArrowRight'] || keysDown['d']) heldX += KEY_MOVE_SPEED * dt;
+  shownAngle += (heldAngle - shownAngle) * Math.min(1, dt * 18);   // smooth turning
 
   // When the cooldown ends, the Next shape becomes the one you hold
   if (dropCooldown > 0) {
@@ -1808,6 +1973,7 @@ function updateGame(dt) {
     if (dropCooldown <= 0 && !currentItem) {
       currentItem = nextItem;
       nextItem = makeRandomItem();
+      heldAngle = shownAngle = 0;
       drawNextPreview();
     }
   }
@@ -1826,13 +1992,16 @@ function updateGame(dt) {
       b.sticky -= dt;
       if (b.sticky <= 0) unstick(b);
     }
-    if (b.kind === 'power' && Math.random() < dt * 25) sparks(b.x + rand(-8, 8), b.y + rand(-8, 8), '#ffffff', 1, 60);
+    if (b.kind === 'power' && Math.random() < dt * 25) {
+      const p = b.m.position;
+      sparks(p.x + rand(-8, 8), p.y + rand(-8, 8), '#ffffff', 1, 60);
+    }
   }
 
   // Game over check: a settled shape poking above the red line for too long
   danger = false;
   for (const b of bodies) {
-    if (b.age > 1 && b.y - b.r < CONTAINER_TOP) {
+    if (b.age > 1 && b.m.bounds.min.y < CONTAINER_TOP) {
       b.overTime += dt;
       danger = true;
       if (b.overTime > GAME_OVER_DELAY) { gameOver(); return; }
@@ -1850,7 +2019,7 @@ function updateGame(dt) {
 function gameOver() {
   state = 'ending';
   sounds.over();
-  endingQueue = bodies.slice().sort((a, b) => a.y - b.y);
+  endingQueue = bodies.slice().sort((a, b) => a.m.position.y - b.m.position.y);
   endingTimer = 0.5;
   showBanner('GAME OVER', '', '#ff5c9a');
 }
@@ -1860,10 +2029,11 @@ function updateEnding(dt) {
   if (endingTimer > 0) return;
   if (endingQueue.length) {
     const b = endingQueue.shift();
-    b.dead = true;
+    const p = b.m.position, r = reachOf(b);
     shatter(b, null, 0.9);
-    if (FX >= 1) addFx({ type: 'bubble', follow: null, x: b.x, y: b.y, r0: b.r * 0.9, r1: b.r * 1.3, t: 0, dur: 0.18, hue: rand(0, 360) });
-    tone(noteFreq(Math.min(12, bodies.length - endingQueue.length)), 0.1, { type: 'triangle', vol: 0.08 });
+    removeBody(b);
+    if (FX >= 1) addFx({ type: 'bubble', follow: null, x: p.x, y: p.y, r0: r * 0.8, r1: r * 1.15, t: 0, dur: 0.18, hue: rand(0, 360) });
+    tone(noteFreq(Math.min(14, bodies.length - endingQueue.length)), 0.1, { type: 'triangle', vol: 0.08 });
     bodies = bodies.filter(x => !x.dead);
     endingTimer = bodies.length > 20 ? 0.045 : 0.09;
   } else {
@@ -1881,16 +2051,20 @@ function showGameOverScreen() {
   document.getElementById('endMerges').textContent = mergesCount;
   document.getElementById('endCombo').textContent = 'x' + bestCombo;
   const cx = prepSmallCanvas(document.getElementById('endShape'), 56);
-  drawShape(cx, maxTierReached, 28, 28, 18, 0, SHAPE_CHAIN[maxTierReached].color, { mood: 'happy' });
+  drawShape(cx, maxTierReached, 28, 28, 22 / SHAPE_DEFS[maxTierReached].extent, 0, colorOf(maxTierReached, null), { mood: 'happy' });
   document.getElementById('overlay').hidden = false;
 }
 
 // Start a fresh game
 function restart() {
+  Composite.clear(engine.world, false);
+  Matter.Pairs.clear(engine.pairs);
+  Composite.add(engine.world, [leftWall, rightWall, floorBody]);
   bodies = []; fx = []; mergeQueue = []; powerQueue = []; endingQueue = [];
   score = 0; shownScore = 0;
   document.getElementById('score').textContent = '0';
   containerWidth = targetContainerWidth = CONTAINER_START_WIDTH;
+  placeWalls();
   camZoom = 1;
   expansions = 0;
   dropsCount = 0;
@@ -1899,6 +2073,7 @@ function restart() {
   maxTierReached = 0;
   comboCount = 0; comboTimer = 0; bestCombo = 1; mergesCount = 0;
   shake = 0; screenGlitch = 0; slowMo = 0; banner = null; danger = false;
+  heldAngle = shownAngle = 0;
   currentItem = makeRandomItem();
   nextItem = makeRandomItem();
   loadHighScore();
@@ -1921,26 +2096,46 @@ function applyCamera(c) {
 }
 function screenToWorldX(sx) { return CENTER_X + (sx - CENTER_X) / camZoom; }
 
-// Where would the held shape land if dropped right now? (for the ghost preview)
-function landingY(x, r) {
-  let y = FLOOR_Y - r;
-  for (const b of bodies) {
-    const dx = Math.abs(b.x - x), reach = b.r + r;
-    if (dx < reach) y = Math.min(y, b.y - Math.sqrt(reach * reach - dx * dx));
+// Where would the held shape land if dropped right now? We slide an invisible copy of it
+// down the drop line and ask Matter where its REAL edges first bump into something.
+const aimGhost = { key: '', body: null, y: FLOOR_Y, x: -1, frame: 0 };
+function landingY() {
+  const item = currentItem;
+  const key = item.kind === 'power' ? 'power' : item.tier + ':' + heldAngle.toFixed(3);
+  if (aimGhost.key !== key) {
+    aimGhost.key = key;
+    aimGhost.body = item.kind === 'power' ? Bodies.circle(0, 0, POWERUP_RADIUS) : buildShapeBody(item.tier, 0, 0);
+    if (item.kind !== 'power') Body.setAngle(aimGhost.body, heldAngle);
+    aimGhost.frame = 0;
   }
-  return Math.max(y, DROP_Y);
+  // Only re-measure every few frames (or when you move), to save effort
+  if (aimGhost.frame++ % 4 !== 0 && Math.abs(aimGhost.x - heldX) < 0.5) return aimGhost.y;
+  aimGhost.x = heldX;
+  const others = bodies.filter(b => !b.dead).map(b => b.m).concat(floorBody);
+  const ghost = aimGhost.body;
+  const pieces = ghost.parts.length > 1 ? ghost.parts.slice(1) : [ghost];
+  const hits = y => {
+    Body.setPosition(ghost, { x: heldX, y });
+    return pieces.some(piece => Query.collides(piece, others).length > 0);
+  };
+  let y = DROP_Y;
+  if (hits(y)) return (aimGhost.y = y);
+  const step = 12;
+  while (y < FLOOR_Y + 200 && !hits(y + step)) y += step;
+  let lo = y, hi = y + step;
+  for (let i = 0; i < 5; i++) { const mid = (lo + hi) / 2; if (hits(mid)) hi = mid; else lo = mid; }
+  return (aimGhost.y = lo);
 }
 
 function render() {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 
-  // Background with drifting shape outlines
+  // Background with a scrolling neon grid and drifting shape outlines
   const bg = ctx.createLinearGradient(0, 0, 0, H);
   bg.addColorStop(0, '#0a0518');
   bg.addColorStop(1, '#05030c');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
-  // Faint neon grid that slowly scrolls
   ctx.lineWidth = 1;
   ctx.strokeStyle = 'rgba(255, 43, 214, 0.07)';
   const gridStep = 32, gridShift = (gameTime * 12) % gridStep;
@@ -1950,7 +2145,7 @@ function render() {
   ctx.stroke();
   for (const f of floaters) {
     ctx.globalAlpha = f.alpha;
-    drawSilhouette(ctx, f.tier, f.x, f.y, f.r, f.a, SHAPE_CHAIN[f.tier].color, true);
+    drawSilhouette(ctx, f.tier, f.x, f.y, f.s, f.a, SHAPE_CHAIN[f.tier].color, true);
   }
   ctx.globalAlpha = 1;
 
@@ -1972,52 +2167,58 @@ function render() {
   ctx.fillStyle = glass;
   ctx.fillRect(left, CONTAINER_TOP, containerWidth, FLOOR_Y - CONTAINER_TOP);
 
-  // Aim: a soft beam plus a ghost outline where the shape will land
+  // Aim: a soft beam plus a ghost outline exactly where the shape will land
   if (currentItem && state === 'playing') {
-    const r = itemRadius(currentItem);
-    const ly = landingY(heldX, r);
+    const hw = heldHalfWidth();
+    const ly = landingY();
     const col = currentItem.kind === 'shape' ? colorOf(currentItem.tier, currentItem.color) : '#ffffff';
     const beam = ctx.createLinearGradient(0, DROP_Y, 0, ly);
     beam.addColorStop(0, 'rgba(255,255,255,0.10)');
     beam.addColorStop(1, 'rgba(255,255,255,0.02)');
     ctx.fillStyle = beam;
-    ctx.fillRect(heldX - r * 0.6, DROP_Y, r * 1.2, ly - DROP_Y);
+    ctx.fillRect(heldX - hw * 0.6, DROP_Y, hw * 1.2, Math.max(0, ly - DROP_Y));
     ctx.save();
     ctx.setLineDash([5, 5]);
     ctx.globalAlpha = 0.55;
-    if (currentItem.kind === 'shape') drawSilhouette(ctx, currentItem.tier, heldX, ly, r, 0, col, true);
-    else { ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(heldX, ly, r, 0, TAU); ctx.stroke(); }
+    if (currentItem.kind === 'shape') drawSilhouette(ctx, currentItem.tier, heldX, ly, SHAPE_DEFS[currentItem.tier].size, heldAngle, col, true);
+    else { ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(heldX, ly, POWERUP_RADIUS, 0, TAU); ctx.stroke(); }
     ctx.restore();
   }
 
   // Every shape and power-up in the box
   for (const b of bodies) if (b.links.length) drawGooStrands(ctx, b);
-  for (const b of bodies) {
-    drawBody(ctx, b);
-    if (b.sticky > 0) {
-      // Goo blinks during its last 2 seconds, so you know it's about to dry
-      const fading = b.gooActive && b.sticky < 2 && Math.sin(gameTime * 20) < 0;
-      drawGoo(ctx, b.x, b.y, b.r, gameTime + b.id, fading ? 0.35 : 1);
-    }
-  }
+  for (const b of bodies) drawBody(ctx, b);
 
   // Red countdown rings around shapes that are over the line
   for (const b of bodies) {
     if (b.overTime <= 0) continue;
-    const p = b.overTime / GAME_OVER_DELAY;
+    const p = b.overTime / GAME_OVER_DELAY, pos = b.m.position;
     ctx.strokeStyle = `rgba(255, 60, 90, ${0.6 + Math.sin(gameTime * 20) * 0.3})`;
     ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r + 7, -Math.PI / 2, -Math.PI / 2 + p * TAU);
+    ctx.arc(pos.x, pos.y, reachOf(b) + 6, -Math.PI / 2, -Math.PI / 2 + p * TAU);
     ctx.stroke();
+  }
+
+  // Learning mode: show the real collision pieces Matter is using
+  if (showPieces) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 1;
+    for (const b of bodies) {
+      for (const piece of (b.m.parts.length > 1 ? b.m.parts.slice(1) : [b.m])) {
+        ctx.beginPath();
+        piece.vertices.forEach((v, i) => i ? ctx.lineTo(v.x, v.y) : ctx.moveTo(v.x, v.y));
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
   }
 
   drawFx(ctx);
 
-  // Walls and floor (drawn on top so shapes look like they're inside the glass)
+  // Walls and floor: a neon tube with a wide soft glow, a medium glow and a white-hot core
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  // A neon tube: wide soft glow, medium glow, bright white-hot core
   ctx.beginPath();
   ctx.moveTo(left - 3.5, CONTAINER_TOP - 14);
   ctx.lineTo(left - 3.5, FLOOR_Y + 3.5);
@@ -2057,7 +2258,7 @@ function render() {
 
   // The shape you're holding (bobs gently, eyes look down at the landing spot)
   if (currentItem && state === 'playing') {
-    drawItem(ctx, currentItem, heldX, DROP_Y + Math.sin(gameTime * 3) * 2, 1, { x: 0, y: 1 });
+    drawItem(ctx, currentItem, heldX, DROP_Y + Math.sin(gameTime * 3) * 2, 1, { x: 0, y: 1 }, shownAngle);
   }
   ctx.restore();
 
@@ -2065,11 +2266,11 @@ function render() {
 
   // A hint for brand-new players
   if (dropsCount < 3 && state === 'playing') {
-    ctx.font = `15px ${DISPLAY_FONT}`;
+    ctx.font = `14px ${DISPLAY_FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.fillText(IS_TOUCH ? 'Drag to aim · lift to drop' : 'Mouse or ← → to aim · click or Space to drop', W / 2, CONTAINER_TOP + 28);
+    ctx.fillText(IS_TOUCH ? 'Drag to aim · ⟳ Rotate · lift to drop' : 'Aim · ↑ or scroll to rotate · click to drop', W / 2, CONTAINER_TOP + 28);
   }
 
   if (state === 'paused') {
@@ -2101,54 +2302,63 @@ function render() {
   }
 }
 
-// Draws one body, including the birth "boing" and glitch flicker
+// Draws one body, including the birth "boing", glitch flicker and goo
 function drawBody(c, b) {
-  let vr = b.r;
-  if (b.popFrom < 1 && b.anim < POP_TIME) vr = b.baseR * (b.popFrom + (1 - b.popFrom) * easeOutElastic(b.anim / POP_TIME));
-  if (b.kind === 'power') { drawPowerUp(c, b.power, b.x, b.y, vr, gameTime); return; }
+  const pos = b.m.position, angle = b.m.angle;
+  if (b.kind === 'power') { drawPowerUp(c, b.power, pos.x, pos.y, POWERUP_RADIUS, gameTime); return; }
 
+  const def = SHAPE_DEFS[b.tier];
+  let vs = b.scale;   // how big to draw it
+  if (b.popFrom < 1 && b.anim < POP_TIME) vs = b.popFrom + (1 - b.popFrom) * easeOutElastic(b.anim / POP_TIME);
+  const s = def.size * vs;
   const color = colorOf(b.tier, b.color);
   const opts = {
-    sx: 1 + b.squash, sy: 1 - b.squash,
-    look: { x: heldX - b.x, y: DROP_Y - b.y },
+    look: { x: heldX - pos.x, y: DROP_Y - pos.y },
     blink: b.blink < 0,
     mood: b.overTime > 0 ? 'worried' : b.happy > 0 ? 'happy' : 'normal',
   };
 
-  // The Sun has a warm, pulsing aura
+  // The last shape has a pulsing aura
   if (b.tier === LAST) {
+    const r = def.reach * s;
     c.save();
     c.globalCompositeOperation = 'lighter';
-    const g = c.createRadialGradient(b.x, b.y, vr * 0.8, b.x, b.y, vr * 1.7);
-    g.addColorStop(0, `rgba(255, 95, 210, ${0.28 + Math.sin(gameTime * 4) * 0.08})`);
-    g.addColorStop(1, 'rgba(255, 95, 210, 0)');
+    const g = c.createRadialGradient(pos.x, pos.y, r * 0.5, pos.x, pos.y, r * 1.4);
+    g.addColorStop(0, withAlpha(color, 0.22 + Math.sin(gameTime * 4) * 0.06));
+    g.addColorStop(1, withAlpha(color, 0));
     c.fillStyle = g;
-    c.beginPath(); c.arc(b.x, b.y, vr * 1.7, 0, TAU); c.fill();
+    c.beginPath(); c.arc(pos.x, pos.y, r * 1.4, 0, TAU); c.fill();
     c.restore();
   }
 
   if (b.glitch > 0) {
     // Glitch flicker: red & cyan ghosts plus sliced, jittering stripes
     const k = b.glitch / GLITCH_TIME;
-    const off = vr * 0.3 * k;
+    const r = def.reach * s, off = r * 0.3 * k;
     c.save();
     c.globalCompositeOperation = 'lighter';
     c.globalAlpha = 0.75 * k;
-    drawSilhouette(c, b.tier, b.x + off, b.y, vr, b.angle, '#ff2d75');
-    drawSilhouette(c, b.tier, b.x - off, b.y + off * 0.3, vr, b.angle, '#27e8ff');
+    drawSilhouette(c, b.tier, pos.x + off, pos.y, s, angle, '#ff2d75');
+    drawSilhouette(c, b.tier, pos.x - off, pos.y + off * 0.3, s, angle, '#27e8ff');
     c.restore();
-    const bands = 5, top = b.y - vr * 1.4, h = (vr * 2.8) / bands;
+    const bands = 5, top = pos.y - r * 1.2, h = (r * 2.4) / bands;
     for (let i = 0; i < bands; i++) {
-      const shift = Math.random() < 0.5 ? (Math.random() - 0.5) * vr * 0.7 * k : 0;
+      const shift = Math.random() < 0.5 ? (Math.random() - 0.5) * r * 0.7 * k : 0;
       c.save();
       c.beginPath();
-      c.rect(b.x - vr * 2, top + i * h, vr * 4, h + 0.5);
+      c.rect(pos.x - r * 2, top + i * h, r * 4, h + 0.5);
       c.clip();
-      drawShape(c, b.tier, b.x + shift, b.y, vr, b.angle, color, opts);
+      drawShape(c, b.tier, pos.x + shift, pos.y, s, angle, color, opts);
       c.restore();
     }
   } else {
-    drawShape(c, b.tier, b.x, b.y, vr, b.angle, color, opts);
+    drawShape(c, b.tier, pos.x, pos.y, s, angle, color, opts);
+  }
+
+  if (b.sticky > 0) {
+    // Goo blinks during its last 2 seconds, so you know it's about to dry
+    const fading = b.gooActive && b.sticky < 2 && Math.sin(gameTime * 20) < 0;
+    drawGoo(c, b.tier, pos.x, pos.y, s, angle, gameTime + b.id, fading ? 0.35 : 1);
   }
 }
 
@@ -2172,7 +2382,7 @@ function drawHud() {
   ctx.textAlign = 'right';
   ctx.fillStyle = '#a99bd6';
   ctx.fillText('NEXT', W - 12, 10);
-  if (nextItem) drawItem(ctx, nextItem, W - 32, 50, Math.min(1, 17 / itemRadius(nextItem)));
+  if (nextItem) drawItem(ctx, nextItem, W - 32, 50, fitScale(nextItem, 18));
   ctx.restore();
 }
 
@@ -2189,7 +2399,7 @@ function drawBanner() {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
-  ctx.font = `44px ${DISPLAY_FONT}`;
+  ctx.font = `42px ${DISPLAY_FONT}`;
   ctx.lineWidth = 10;
   ctx.strokeStyle = 'rgba(20, 10, 40, 0.9)';
   ctx.strokeText(banner.text, 0, 0);
@@ -2219,9 +2429,16 @@ function prepSmallCanvas(c, w, h = w) {
   return cx;
 }
 
+// How much to shrink an item so it fits in a box of a given half-size
+function fitScale(item, halfBox) {
+  if (item.kind === 'power') return Math.min(1, halfBox / POWERUP_RADIUS);
+  const def = SHAPE_DEFS[item.tier];
+  return Math.min(1, halfBox / (def.extent * def.size));
+}
+
 function drawNextPreview() {
   const cx = prepSmallCanvas(document.getElementById('nextCanvas'), 96);
-  drawItem(cx, nextItem, 48, 48, Math.min(1, 32 / itemRadius(nextItem)));
+  drawItem(cx, nextItem, 48, 48, fitScale(nextItem, 34));
   document.getElementById('nextLabel').textContent =
     nextItem.kind === 'power' ? '✨ ' + POWERUPS[nextItem.power].name : (nextItem.sticky ? 'Sticky ' : '') + SHAPE_CHAIN[nextItem.tier].name;
 }
@@ -2237,7 +2454,8 @@ function buildKey(flashNewest) {
     if (flashNewest && tier === maxTierReached) row.classList.add('flash');
     const c = document.createElement('canvas');
     // In Color Mode the key is grey, because any color can be any shape
-    drawShape(prepSmallCanvas(c, 36), tier, 18, 19, 12, 0, colorMode ? '#cfc8ef' : def.color,
+    const iconColor = colorMode ? '#cfc8ef' : (tier === LAST && RAINBOW_FINAL ? '#ffffff' : def.color);
+    drawShape(prepSmallCanvas(c, 32), tier, 16, 16, 12.5 / SHAPE_DEFS[tier].extent, 0, iconColor,
               { mood: tier <= maxTierReached ? 'happy' : 'normal' });
     row.appendChild(c);
     const name = document.createElement('span');
@@ -2259,7 +2477,7 @@ function buildKey(flashNewest) {
     list.appendChild(row);
     const arrow = document.createElement('div');
     arrow.className = 'key-arrow';
-    arrow.textContent = tier < LAST ? '▼ two make one' : `two ${def.name}s = SUPERNOVA +${MAX_MERGE_BONUS}`;
+    arrow.textContent = tier < LAST ? '▼' : `two ${def.name}s = SUPERNOVA +${MAX_MERGE_BONUS}`;
     list.appendChild(arrow);
   });
 
@@ -2279,31 +2497,33 @@ function buildKey(flashNewest) {
   const stickyIcon = document.getElementById('stickyIcon');
   if (stickyIcon) {
     const sc = prepSmallCanvas(stickyIcon, 34);
-    drawShape(sc, 2, 17, 16, 10, 0, colorMode ? '#cfc8ef' : SHAPE_CHAIN[2].color, {});
-    drawGoo(sc, 17, 16, 10, 0.6, 1);
+    const s = 10 / SHAPE_DEFS[2].extent;
+    drawShape(sc, 2, 17, 15, s, 0, colorMode ? '#cfc8ef' : SHAPE_CHAIN[2].color, {});
+    drawGoo(sc, 2, 17, 15, s, 0, 0.6, 1);
   }
   extra.querySelectorAll('canvas[data-power]').forEach(c => drawPowerUp(prepSmallCanvas(c, 34), c.dataset.power, 17, 18, 10, 0.4));
 
   drawChainStrip();
 }
 
-// Phones: a one-line version of the key above the game:  ● › ▲ › ■ ...
+// Phones: a one-line version of the key above the game
 function drawChainStrip() {
   const c = document.getElementById('chainStrip');
   const w = c.clientWidth;
   if (!w) return;   // hidden on big screens
   const cx = prepSmallCanvas(c, w, 34);
   const gap = w / SHAPE_CHAIN.length;
-  cx.font = '16px sans-serif';
+  cx.font = '13px sans-serif';
   cx.textAlign = 'center';
   cx.textBaseline = 'middle';
   SHAPE_CHAIN.forEach((def, tier) => {
     const x = gap * (tier + 0.5);
     if (tier === maxTierReached && tier > 0) {
       cx.fillStyle = 'rgba(0, 240, 255, 0.22)';
-      cx.beginPath(); cx.arc(x, 17, 16, 0, TAU); cx.fill();
+      cx.beginPath(); cx.arc(x, 17, 15, 0, TAU); cx.fill();
     }
-    drawShape(cx, tier, x, 17, 7 + tier * 0.9, 0, colorMode ? '#cfc8ef' : def.color, { face: false });
+    const half = Math.min(gap * 0.36, 7 + tier * 0.6);
+    drawShape(cx, tier, x, 17, half / SHAPE_DEFS[tier].extent, 0, colorMode ? '#cfc8ef' : (tier === LAST && RAINBOW_FINAL ? '#ffffff' : def.color), { face: false });
     if (tier < LAST) {
       cx.fillStyle = '#a69ed3';
       cx.fillText('›', x + gap / 2, 16);
@@ -2333,35 +2553,53 @@ function aimAt(clientX) {
   heldX = screenToWorldX(((clientX - rect.left) / rect.width) * W);
 }
 
-// Mouse: move to aim, click to drop. Touch: drag to aim, lift finger to drop.
+// Mouse: move to aim, left-click to drop, right-click or scroll to rotate.
+// Touch: drag to aim, lift your finger to drop, Rotate button to turn.
 let skipNextUp = false;
 canvas.addEventListener('pointermove', e => aimAt(e.clientX));
 canvas.addEventListener('pointerdown', e => {
   initAudio();
   if (state === 'paused') { state = 'playing'; skipNextUp = true; return; }
   aimAt(e.clientX);
-  if (e.pointerType === 'mouse') { if (e.button === 0) drop(); }
-  else canvas.setPointerCapture(e.pointerId);
+  if (e.pointerType === 'mouse') {
+    if (e.button === 0) drop();
+    else if (e.button === 2) rotateHeld(1);
+  } else {
+    canvas.setPointerCapture(e.pointerId);
+  }
 });
 canvas.addEventListener('pointerup', e => {
   if (skipNextUp) { skipNextUp = false; return; }
   if (e.pointerType !== 'mouse') drop();
 });
+canvas.addEventListener('contextmenu', e => e.preventDefault());   // right-click rotates instead of opening a menu
+let lastWheel = 0;
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const now = performance.now();
+  if (now - lastWheel < 120) return;                              // one turn per scroll "click"
+  lastWheel = now;
+  rotateHeld(e.deltaY > 0 ? 1 : -1);
+}, { passive: false });
 
 window.addEventListener('keydown', e => {
   initAudio();
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   keysDown[key] = true;
   if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) e.preventDefault(); // no page scrolling
+  if (e.repeat) return;
   if (key === ' ' || key === 'ArrowDown') {
     if (state === 'over') restart();
     else drop();
   }
+  if (key === 'ArrowUp' || key === 'w' || key === 'r') rotateHeld(1);
+  if (key === 'q') rotateHeld(-1);
   if (key === 'p') {
     if (state === 'playing') state = 'paused';
     else if (state === 'paused') state = 'playing';
   }
   if (key === 'm') toggleMute();
+  if (key === 'g') showPieces = !showPieces;
 });
 window.addEventListener('keyup', e => {
   keysDown[e.key.length === 1 ? e.key.toLowerCase() : e.key] = false;
@@ -2381,13 +2619,14 @@ function onButton(id, fn) {
 
 function toggleMute() {
   muted = !muted;
-  document.getElementById('muteBtn').textContent = muted ? '🔇 Sound off' : '🔊 Sound on';
+  document.getElementById('muteBtn').innerHTML = muted ? '🔇<span class="wide"> Sound</span> off' : '🔊<span class="wide"> Sound</span> on';
   try { localStorage.setItem('shapeDrop2_muted', muted ? '1' : '0'); } catch (e) {}
 }
 
+onButton('rotateBtn', () => rotateHeld(1));
 onButton('modeBtn', () => {
   colorMode = !colorMode;
-  document.getElementById('modeBtn').textContent = colorMode ? 'Mode: Color 🎨' : 'Mode: Classic';
+  document.getElementById('modeBtn').innerHTML = '<span class="wide">Mode: </span>' + (colorMode ? 'Color 🎨' : 'Classic');
   restart();   // switching modes starts a new game
 });
 onButton('muteBtn', toggleMute);
@@ -2409,10 +2648,13 @@ function frame(now) {
 
   if (state === 'playing') {
     physicsTimeBank += dt;
-    while (physicsTimeBank >= PHYSICS_STEP) {
+    let steps = 0;
+    while (physicsTimeBank >= PHYSICS_STEP && steps < 8) {
       physicsStep(PHYSICS_STEP);
       physicsTimeBank -= PHYSICS_STEP;
+      steps++;
     }
+    if (steps === 8) physicsTimeBank = 0;   // a slow device skips ahead instead of freezing
     updateGame(dt);
   } else if (state === 'ending') {
     updateEnding(realDt);
@@ -2434,7 +2676,8 @@ function frame(now) {
 
 // ---- Let's go! ----
 for (let i = 0; i < 12; i++) {   // faint background shapes
-  floaters.push({ tier: i % SHAPE_CHAIN.length, x: rand(0, W), y: rand(0, H), r: rand(10, 30),
+  const tier = i % SHAPE_CHAIN.length;
+  floaters.push({ tier, x: rand(0, W), y: rand(0, H), s: rand(10, 26) / SHAPE_DEFS[tier].extent,
                   vy: rand(6, 16), a: rand(0, TAU), va: rand(-0.3, 0.3), alpha: rand(0.05, 0.1) });
 }
 try { if (localStorage.getItem('shapeDrop2_muted') === '1') toggleMute(); } catch (e) {}
