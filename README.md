@@ -35,3 +35,7 @@ All the easy-to-tweak numbers are in the **A. SETTINGS** section near the top of
 ## Version history
 
 Each change is saved as a git commit, and stable versions get a tag (like `v1.0`). To see or restore an older version, look under **Releases / Tags** or the commit history on GitHub.
+
+## Bonus game: Neon Dunk
+
+`neon-dunk/index.html` is a separate one-file neon arcade game in the style of Flappy Dunk. Tap, click or press Space to bounce the ball, and drop it through hoops that alternate between the walls. Two swishes in a row (no rim touch) start **Fever Mode**, which adds a lightning trail and a growing multiplier. The floor is super bouncy but breaks after 3 bounces per hoop. Press M to mute.

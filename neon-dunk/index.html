@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Neon Dunk</title>
+<!--
+  =====================================================================
+   NEON DUNK - a hyper-casual physics arcade game
+  =====================================================================
+   Tap / click / Space to bounce the ball up. It keeps travelling
+   sideways and ricochets off the walls. Drop it DOWN through the hoop.
+     - Clean pass (no rim touch) = SWISH
+     - 2 swishes in a row        = FEVER (x2, x3, x4 ... multiplier)
+     - Rim touch or floor touch  = fever ends
+     - The floor is a super-bouncy pad, but it cracks after 3 bounces
+       per hoop. Score to repair it. Fall off the bottom = game over.
+
+   Script sections:
+     A. Settings         D. Physics          G. Drawing
+     B. Setup & helpers  E. Scoring & fever  H. Input
+     C. Sound            F. Effects          I. Main loop
+  =====================================================================
+-->
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #040407;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    display: block;
+    background: #0a0a12;
+    box-shadow: 0 0 80px rgba(0, 240, 255, 0.08);
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+(() => {
+'use strict';
+
+/* =====================================================================
+   A. SETTINGS
+   ===================================================================== */
+const W = 450, H = 800;             // virtual resolution (9:16 portrait)
+
+const CFG = {
+  gravity: 1850,        // px/s^2
+  tapVy: -720,          // upward velocity set on tap
+  tapVx: 250,           // sideways speed set on tap (in current direction)
+  ballR: 15,
+  wallE: 0.9,           // wall restitution
+  floorE: 0.93,         // floor restitution  ("super bounce")
+  floorKick: 560,       // floor always kicks back at least this hard
+  floorH: 24,
+  floorCharges: 3,      // bounces allowed per hoop before the floor breaks
+  rimR: 7,              // rim collider radius
+  rimE: 0.55,           // rim restitution
+  hoopGap: 100,         // distance between rim centers
+  wallInset: 34,        // outer rim center distance from its wall
+  hoopStepMin: 210,     // vertical distance to next hoop
+  hoopStepMax: 320,
+  camAnchor: 0.36,      // new hoop sits this far down the screen
+  camSpeed: 3.5,        // camera smoothing
+  maxStepPx: 4,         // max ball travel per physics sub-step (anti-tunneling)
+  feverSwishes: 2,      // swishes in a row to trigger fever
+};
+
+const COL = {
+  bg: '#0a0a12',
+  grid: 'rgba(120, 140, 255, 0.055)',
+  wallL: '#ff2bd6',
+  wallR: '#00f0ff',
+  rim: '#ff3d6e',
+  ball: '#ff9a1f',
+  fever: '#46c8ff',
+  floor: '#39ff88',
+  warn: '#ff3355',
+  gold: '#ffd84a',
+};
+
+const FONT = '"Arial Black", "Segoe UI Black", "Helvetica Neue", system-ui, sans-serif';
+
+/* =====================================================================
+   B. SETUP & HELPERS
+   ===================================================================== */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let scale = 1;        // canvas pixels per virtual pixel
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  const cssW = Math.floor(W * s), cssH = Math.floor(H * s);
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  scale = canvas.width / W;
+}
+window.addEventListener('resize', resize);
+resize();
+
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const pick = arr => arr[(Math.random() * arr.length) | 0];
+const easeOutBack = t => { const c = 1.7; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+
+function loadBest() { try { return parseInt(localStorage.getItem('neonDunkBest'), 10) || 0; } catch (e) { return 0; } }
+function saveBest(v) { try { localStorage.setItem('neonDunkBest', String(v)); } catch (e) { /* ignore */ } }
+
+// Parallax background stars
+const stars = [];
+for (let i = 0; i < 70; i++) stars.push({ x: rand(0, W), y: rand(0, H), z: rand(0.1, 0.5), s: rand(0.6, 1.8) });
+
+/* =====================================================================
+   C. SOUND (tiny synth, no files)
+   ===================================================================== */
+let actx = null, muted = false;
+function initAudio() {
+  if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+  try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; }
+}
+function tone(f, dur, type = 'sine', vol = 0.1, f2 = null, delay = 0) {
+  if (!actx || muted) return;
+  const t = actx.currentTime + delay;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f, t);
+  if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(actx.destination);
+  o.start(t);
+  o.stop(t + dur + 0.02);
+}
+const sfx = {
+  tap()      { tone(520, 0.08, 'triangle', 0.07, 780); },
+  wall()     { tone(260, 0.05, 'square', 0.025); },
+  rim(v)     { tone(950, 0.12, 'square', Math.min(0.1, 0.02 + v / 7000), 620); },
+  floor(v)   { tone(150, 0.2, 'sine', Math.min(0.3, 0.08 + v / 5000), 55); },
+  score()    { tone(660, 0.1, 'triangle', 0.1); tone(880, 0.14, 'triangle', 0.1, null, 0.07); },
+  swish()    { tone(1100, 0.25, 'sine', 0.07, 2400); tone(740, 0.16, 'triangle', 0.09, null, 0.03); },
+  fever()    { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.16, 'sawtooth', 0.05, null, i * 0.055)); },
+  feverEnd() { tone(520, 0.35, 'sawtooth', 0.05, 110); },
+  crack()    { tone(220, 0.4, 'sawtooth', 0.09, 40); },
+  over()     { tone(420, 0.6, 'triangle', 0.12, 70); },
+};
+
+/* =====================================================================
+   STATE
+   ===================================================================== */
+let state = 'START';            // 'START' | 'PLAYING' | 'OVER'
+let stateTime = 0, time = 0;
+let score = 0, best = loadBest(), newBest = false, scorePulse = 0;
+let ball, hoops, floor, camY, camTarget;
+let streak = 0, fever = false, mult = 1, feverFlash = 0;
+let particles, rings, popups, history, shake;
+let wallFlash = [0, 0];
+let lastBallX = 0, lastBallY = 0;
+
+function makeHoop(side, y) {           // side: -1 = left wall, 1 = right wall
+  const outer = side < 0 ? CFG.wallInset : W - CFG.wallInset;
+  const inner = outer - side * CFG.hoopGap;
+  const lx = Math.min(outer, inner), rx = Math.max(outer, inner);
+  return { side, y, lx, rx, cx: (lx + rx) / 2, touched: false, dying: false, t: 0, born: 0, net: 0, flash: [0, 0] };
+}
+
+function reset() {
+  score = 0; newBest = false; scorePulse = 0;
+  streak = 0; fever = false; mult = 1; feverFlash = 0;
+  camY = 0; camTarget = 0;
+  ball = { x: W * 0.3, y: H - 250, vx: CFG.tapVx, vy: 0, r: CFG.ballR, rot: 0, squash: 0 };
+  floor = { y: H - CFG.floorH, charges: CFG.floorCharges, broken: false, flash: 0, rebuild: 0 };
+  hoops = [makeHoop(1, 330)];
+  particles = []; rings = []; popups = []; history = [];
+  shake = 0; wallFlash = [0, 0];
+  lastBallX = ball.x; lastBallY = ball.y;
+}
+
+function startGame() {
+  state = 'PLAYING';
+  stateTime = 0;
+  jump();
+}
+
+function gameOver() {
+  state = 'OVER';
+  stateTime = 0;
+  if (score > best) { best = score; newBest = true; saveBest(best); }
+  if (fever) fever = false;
+  addShake(7);
+  sfx.over();
+}
+
+function jump() {
+  let dir = Math.sign(ball.vx);
+  if (dir === 0) dir = hoops.length ? Math.sign(hoops[hoops.length - 1].cx - ball.x) || 1 : 1;
+  ball.vx = dir * CFG.tapVx;
+  ball.vy = CFG.tapVy;
+  for (let i = 0; i < 8; i++) {
+    spawn(ball.x + rand(-6, 6), ball.y + ball.r, rand(-60, 60) - dir * 40, rand(60, 160), rand(0.2, 0.35),
+          rand(2, 4), fever ? pick(['#ffffff', COL.fever]) : 'rgba(255,200,140,0.9)', 0);
+  }
+  sfx.tap();
+}
+
+function addShake(v) { shake = Math.min(18, Math.max(shake, v)); }
+
+/* =====================================================================
+   D. PHYSICS
+   ===================================================================== */
+function stepBall(dt) {
+  // Continuous collision: split the frame into sub-steps so the ball never
+  // moves more than CFG.maxStepPx at once (thin rims can't be skipped).
+  const speed = Math.hypot(ball.vx, ball.vy) + CFG.gravity * dt;
+  const n = clamp(Math.ceil(speed * dt / CFG.maxStepPx), 2, 80);
+  const h = dt / n;
+
+  for (let i = 0; i < n; i++) {
+    const px = ball.x, py = ball.y;
+    ball.vy += CFG.gravity * h;
+    ball.x += ball.vx * h;
+    ball.y += ball.vy * h;
+
+    // Walls
+    if (ball.x - ball.r < 0) {
+      ball.x = ball.r;
+      if (ball.vx < 0) { ball.vx = -ball.vx * CFG.wallE; wallHit(0); }
+    } else if (ball.x + ball.r > W) {
+      ball.x = W - ball.r;
+      if (ball.vx > 0) { ball.vx = -ball.vx * CFG.wallE; wallHit(1); }
+    }
+
+    // Rims + scoring trigger
+    const count = hoops.length;
+    for (let k = 0; k < count; k++) {
+      const hp = hoops[k];
+      if (hp.dying) continue;
+      collideRim(hp, 0, hp.lx);
+      collideRim(hp, 1, hp.rx);
+      // Trigger zone: ball center crosses the rim line downward between the rims
+      if (!hp.dying && py < hp.y && ball.y >= hp.y && ball.vy > 0) {
+        const f = (hp.y - py) / (ball.y - py);
+        const cx = px + (ball.x - px) * f;
+        if (cx > hp.lx && cx < hp.rx) scoreHoop(hp);
+      }
+    }
+
+    // Floor (moves with the camera)
+    if (!floor.broken && ball.y + ball.r > floor.y) {
+      ball.y = floor.y - ball.r;
+      if (ball.vy > 0) floorHit();
+    }
+  }
+
+  ball.rot += ball.vx * dt / ball.r;
+}
+
+function collideRim(hp, idx, rimX) {
+  const dx = ball.x - rimX, dy = ball.y - hp.y;
+  const R = ball.r + CFG.rimR;
+  const d2 = dx * dx + dy * dy;
+  if (d2 >= R * R) return;
+  const d = Math.sqrt(d2) || 0.0001;
+  const nx = dx / d, ny = dy / d;
+  ball.x = rimX + nx * R;                    // push out
+  ball.y = hp.y + ny * R;
+  hp.touched = true;                         // any contact spoils the swish
+  const vn = ball.vx * nx + ball.vy * ny;
+  if (vn < 0) {
+    ball.vx -= (1 + CFG.rimE) * vn * nx;
+    ball.vy -= (1 + CFG.rimE) * vn * ny;
+    const tx = -ny, ty = nx, vt = ball.vx * tx + ball.vy * ty;   // a bit of friction
+    ball.vx -= vt * 0.08 * tx;
+    ball.vy -= vt * 0.08 * ty;
+    const imp = -vn;
+    if (imp > 70) {
+      hp.flash[idx] = 1;
+      sfx.rim(imp);
+      for (let i = 0; i < Math.min(14, imp / 50); i++) {
+        spawn(rimX, hp.y, nx * rand(80, 260) + rand(-80, 80), ny * rand(80, 260) + rand(-80, 80),
+              rand(0.2, 0.45), rand(1.5, 3), pick([COL.rim, '#ffffff', '#ff9ab5']), 600);
+      }
+    }
+    if (imp > 520) addShake(Math.min(10, (imp - 450) / 55));
+  }
+}
+
+function wallHit(side) {
+  wallFlash[side] = 1;
+  sfx.wall();
+  const x = side === 0 ? 0 : W;
+  const c = side === 0 ? COL.wallL : COL.wallR;
+  for (let i = 0; i < 6; i++) {
+    spawn(x, ball.y + rand(-8, 8), (side === 0 ? 1 : -1) * rand(40, 160), rand(-120, 120), rand(0.2, 0.4), rand(1.5, 3), c, 0);
+  }
+}
+
+function floorHit() {
+  const v = ball.vy;
+  ball.vy = -Math.max(v * CFG.floorE, CFG.floorKick);
+  ball.squash = Math.min(0.35, v / 3200);
+  if (v > 900) addShake(Math.min(14, (v - 800) / 70));
+  sfx.floor(v);
+  floor.flash = 1;
+  floor.charges--;
+  for (let i = 0; i < 14; i++) {
+    spawn(ball.x + rand(-10, 10), floor.y, rand(-220, 220), rand(-260, -40), rand(0.25, 0.5), rand(1.5, 3.5),
+          floor.charges <= 1 ? COL.warn : COL.floor, 700);
+  }
+  rings.push({ x: ball.x, y: floor.y, r: 6, grow: 260, life: 0.35, max: 0.35, color: COL.floor, flat: true });
+  if (fever) endFever();
+  streak = 0;
+  for (const hp of hoops) hp.touched = false;
+  if (floor.charges <= 0) breakFloor();
+}
+
+function breakFloor() {
+  floor.broken = true;
+  sfx.crack();
+  addShake(9);
+  for (let i = 0; i < 60; i++) {
+    spawn(rand(0, W), floor.y + rand(0, 10), rand(-80, 80), rand(-240, 20), rand(0.6, 1.2), rand(2, 5),
+          pick([COL.warn, COL.floor, '#ffffff']), 900, true);
+  }
+  popup('FLOOR BROKE!', W / 2, floor.y - 70, COL.warn, 30, 1.2);
+}
+
+/* =====================================================================
+   E. SCORING & FEVER
+   ===================================================================== */
+function scoreHoop(hp) {
+  const swish = !hp.touched;
+  if (swish) {
+    streak++;
+    if (streak >= CFG.feverSwishes && !fever) {
+      fever = true;
+      feverFlash = 1;
+      sfx.fever();
+      popup('FEVER!', W / 2, hp.y - 90, COL.fever, 44, 1.2);
+    }
+  } else {
+    if (fever) endFever();
+    streak = 0;
+  }
+  mult = fever ? streak : 1;
+  const pts = mult;
+  score += pts;
+  scorePulse = 1;
+
+  // Effects
+  hp.dying = true; hp.t = 0; hp.net = 1;
+  const c = fever ? COL.fever : swish ? COL.gold : COL.rim;
+  popup('+' + pts, hp.cx, hp.y - 30, c, fever ? 40 : 32, 0.9);
+  if (swish) popup(fever ? 'SWISH x' + mult : 'SWISH!', hp.cx, hp.y - 64, fever ? '#ffffff' : COL.gold, 22, 0.9);
+  rings.push({ x: hp.cx, y: hp.y, r: 20, grow: swish ? 420 : 250, life: 0.45, max: 0.45, color: c });
+  if (swish) rings.push({ x: hp.cx, y: hp.y, r: 8, grow: 260, life: 0.6, max: 0.6, color: '#ffffff' });
+  for (let i = 0; i < (swish ? 34 : 18); i++) {
+    const a = rand(0, Math.PI * 2), s = rand(80, swish ? 380 : 240);
+    spawn(hp.cx, hp.y, Math.cos(a) * s, Math.sin(a) * s - 60, rand(0.35, 0.8), rand(2, 4),
+          fever ? pick(['#ffffff', COL.fever, '#9fe8ff']) : pick([c, '#ffffff', COL.wallL, COL.wallR]), 500, true);
+  }
+  if (swish) sfx.swish(); else sfx.score();
+
+  // Next hoop, higher up on the opposite wall
+  const ny = hp.y - rand(CFG.hoopStepMin, CFG.hoopStepMax);
+  hoops.push(makeHoop(-hp.side, ny));
+  camTarget = Math.min(camTarget, ny - H * CFG.camAnchor);
+
+  // Repair / refill the floor
+  floor.charges = CFG.floorCharges;
+  if (floor.broken) { floor.broken = false; floor.rebuild = 1; }
+}
+
+function endFever() {
+  fever = false;
+  mult = 1;
+  sfx.feverEnd();
+  popup('FEVER OVER', ball.x, ball.y - 40, '#8fb3c9', 18, 0.8);
+  for (let i = 0; i < 24; i++) {
+    const a = rand(0, Math.PI * 2), s = rand(60, 220);
+    spawn(ball.x, ball.y, Math.cos(a) * s, Math.sin(a) * s, rand(0.3, 0.6), rand(1.5, 3.5), pick(['#ffffff', COL.fever]), 0);
+  }
+}
+
+/* =====================================================================
+   F. EFFECTS (particles, rings, popups)
+   ===================================================================== */
+function spawn(x, y, vx, vy, life, size, color, g = 0, square = false) {
+  if (particles.length > 900) particles.shift();
+  particles.push({ x, y, vx, vy, life, max: life, size, color, g, square, rot: rand(0, 6), vr: rand(-10, 10) });
+}
+
+function popup(text, x, y, color, size, life) {
+  popups.push({ text, x, y, color, size, life, max: life });
+}
+
+function emitTrail() {
+  // Lightning/fire trail in fever: emit along the path travelled this frame
+  const dx = ball.x - lastBallX, dy = ball.y - lastBallY;
+  const dist = Math.hypot(dx, dy);
+  const count = Math.min(14, Math.ceil(dist / 5) + 1);
+  for (let i = 0; i < count; i++) {
+    const t = i / count;
+    spawn(lastBallX + dx * t + rand(-4, 4), lastBallY + dy * t + rand(-4, 4),
+          rand(-30, 30) - ball.vx * 0.05, rand(-30, 30) - ball.vy * 0.05,
+          rand(0.25, 0.5), ball.r * rand(0.45, 0.9), pick(['#ffffff', '#bff0ff', COL.fever, '#2f8cff']), -120);
+  }
+  if (Math.random() < 0.35) {
+    const a = rand(0, Math.PI * 2);
+    spawn(ball.x, ball.y, Math.cos(a) * 260, Math.sin(a) * 260, 0.25, 1.6, '#ffffff', 0);
+  }
+}
+
+function updateFx(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.life -= dt;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    p.vy += p.g * dt;
+    p.vx *= Math.exp(-dt * 1.5);
+    p.vy *= Math.exp(-dt * 0.5);
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.rot += p.vr * dt;
+  }
+  for (let i = rings.length - 1; i >= 0; i--) {
+    const r = rings[i];
+    r.life -= dt;
+    r.r += r.grow * dt;
+    if (r.life <= 0) rings.splice(i, 1);
+  }
+  for (let i = popups.length - 1; i >= 0; i--) {
+    const p = popups[i];
+    p.life -= dt;
+    p.y -= 45 * dt;
+    if (p.life <= 0) popups.splice(i, 1);
+  }
+}
+
+/* =====================================================================
+   UPDATE
+   ===================================================================== */
+function update(dt) {
+  time += dt;
+  stateTime += dt;
+
+  // Camera pans smoothly up to follow the newest hoop
+  camY += (camTarget - camY) * (1 - Math.exp(-CFG.camSpeed * dt));
+  floor.y = camY + H - CFG.floorH;
+  floor.flash = Math.max(0, floor.flash - dt * 3);
+  floor.rebuild = Math.max(0, floor.rebuild - dt * 2.5);
+
+  shake *= Math.exp(-dt * 9);
+  if (shake < 0.05) shake = 0;
+  scorePulse = Math.max(0, scorePulse - dt * 3);
+  feverFlash = Math.max(0, feverFlash - dt * 1.5);
+  wallFlash[0] = Math.max(0, wallFlash[0] - dt * 4);
+  wallFlash[1] = Math.max(0, wallFlash[1] - dt * 4);
+  ball.squash *= Math.exp(-dt * 14);
+
+  lastBallX = ball.x; lastBallY = ball.y;
+
+  if (state === 'START') {
+    ball.y = H - 250 + Math.sin(time * 3) * 10;
+    ball.rot += dt * 2;
+  } else if (state === 'PLAYING') {
+    stepBall(dt);
+    // An attempt that drops below the hoop is over: the next pass can be a swish again
+    for (const hp of hoops) if (!hp.dying && ball.y - ball.r > hp.y + 50) hp.touched = false;
+    if (fever) emitTrail();
+    if (ball.y - ball.r > camY + H + 20) gameOver();
+  }
+
+  // Motion history for the regular after-image trail
+  history.push({ x: ball.x, y: ball.y });
+  if (history.length > 10) history.shift();
+
+  for (let i = hoops.length - 1; i >= 0; i--) {
+    const hp = hoops[i];
+    hp.born += dt;
+    hp.t += dt;
+    hp.net = Math.max(0, hp.net - dt * 1.8);
+    hp.flash[0] = Math.max(0, hp.flash[0] - dt * 4);
+    hp.flash[1] = Math.max(0, hp.flash[1] - dt * 4);
+    if (hp.dying && hp.t > 0.5) hoops.splice(i, 1);
+  }
+
+  updateFx(dt);
+}
+
+/* =====================================================================
+   G. DRAWING
+   ===================================================================== */
+function glowText(text, x, y, size, color, blur = 16, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = `900 ${size}px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = color;
+  ctx.shadowBlur = blur * scale;
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawBackground() {
+  // Grid with parallax
+  ctx.strokeStyle = COL.grid;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x <= W; x += 45) { ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); }
+  const step = 60, off = ((-camY * 0.5) % step + step) % step;
+  for (let y = off - step; y < H; y += step) { ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); }
+  ctx.stroke();
+
+  // Stars
+  for (const s of stars) {
+    const y = ((s.y - camY * s.z) % H + H) % H;
+    ctx.fillStyle = `rgba(180,200,255,${0.15 + s.z * 0.5})`;
+    ctx.fillRect(s.x, y, s.s, s.s);
+  }
+}
+
+function drawBigScore() {
+  const size = 230 * (1 + scorePulse * 0.12);
+  ctx.save();
+  ctx.font = `900 ${size}px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = fever ? `rgba(70,200,255,${0.1 + scorePulse * 0.1})` : `rgba(255,255,255,${0.055 + scorePulse * 0.08})`;
+  ctx.fillText(String(score), W / 2, H * 0.47);
+  ctx.restore();
+}
+
+function drawWalls() {
+  const drawWall = (x, color, f) => {
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = (10 + f * 25) * scale;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.55 + f * 0.45;
+    ctx.fillRect(x, 0, 4, H);
+    ctx.restore();
+  };
+  drawWall(0, COL.wallL, wallFlash[0]);
+  drawWall(W - 4, COL.wallR, wallFlash[1]);
+}
+
+function hoopTransform(hp) {
+  let a, s;
+  if (hp.dying) {
+    const t = clamp(hp.t / 0.45, 0, 1);
+    a = 1 - t;
+    s = 1 + t * 0.6;
+  } else {
+    const t = clamp(hp.born / 0.4, 0, 1);
+    a = t;
+    s = 0.3 + 0.7 * easeOutBack(t);
+  }
+  ctx.globalAlpha = Math.max(0, a);
+  ctx.translate(hp.cx, hp.y);
+  ctx.scale(s, s);
+  ctx.translate(-hp.cx, -hp.y);
+}
+
+function drawHoopBack(hp) {
+  ctx.save();
+  hoopTransform(hp);
+  const half = (hp.rx - hp.lx) / 2;
+  const wallX = hp.side < 0 ? 2 : W - 2;
+  const outerX = hp.side < 0 ? hp.lx : hp.rx;
+
+  // Backboard plate + bracket
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillRect(hp.side < 0 ? 4 : W - 10, hp.y - 56, 6, 70);
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(wallX, hp.y - 26); ctx.lineTo(outerX, hp.y);
+  ctx.moveTo(wallX, hp.y + 6);  ctx.lineTo(outerX, hp.y);
+  ctx.stroke();
+
+  // Target halo on the live hoop
+  if (!hp.dying) {
+    const p = 0.5 + 0.5 * Math.sin(time * 4);
+    ctx.strokeStyle = fever ? `rgba(70,200,255,${0.12 + p * 0.12})` : `rgba(255,61,110,${0.08 + p * 0.1})`;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.ellipse(hp.cx, hp.y, half + 10, 16, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Back half of rim
+  ctx.strokeStyle = 'rgba(255,61,110,0.5)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.ellipse(hp.cx, hp.y, half, 9, 0, Math.PI, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawHoopFront(hp) {
+  ctx.save();
+  hoopTransform(hp);
+  const half = (hp.rx - hp.lx) / 2;
+
+  // Net (stretches when scored)
+  const stretch = hp.net * 22 * (0.6 + 0.4 * Math.sin(hp.t * 22));
+  const depth = 44 + stretch;
+  const botHalf = half * (0.55 - hp.net * 0.12);
+  const strands = 7;
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  const top = [], bot = [];
+  for (let i = 0; i <= strands; i++) {
+    const a = Math.PI - (i / strands) * Math.PI;
+    top.push({ x: hp.cx + Math.cos(a) * half, y: hp.y + Math.sin(a) * 9 });
+    bot.push({ x: hp.cx + Math.cos(a) * botHalf, y: hp.y + depth + Math.sin(a) * 4 });
+  }
+  for (let i = 0; i <= strands; i++) {
+    // diagonal criss-cross
+    const j = Math.min(strands, i + 1);
+    ctx.moveTo(top[i].x, top[i].y); ctx.lineTo(bot[j].x, bot[j].y);
+    const k = Math.max(0, i - 1);
+    ctx.moveTo(top[i].x, top[i].y); ctx.lineTo(bot[k].x, bot[k].y);
+  }
+  for (let r = 1; r <= 3; r++) {
+    const t = r / 3.2;
+    for (let i = 0; i <= strands; i++) {
+      const x = top[i].x + (bot[i].x - top[i].x) * t;
+      const y = top[i].y + (bot[i].y - top[i].y) * t;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+
+  // Front half of rim
+  ctx.shadowColor = fever ? COL.fever : COL.rim;
+  ctx.shadowBlur = 14 * scale;
+  ctx.strokeStyle = fever ? '#7fdcff' : COL.rim;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.ellipse(hp.cx, hp.y, half, 9, 0, 0, Math.PI);
+  ctx.stroke();
+
+  // Rim end caps (the actual colliders)
+  const caps = [hp.lx, hp.rx];
+  for (let i = 0; i < 2; i++) {
+    const f = hp.flash[i];
+    ctx.fillStyle = f > 0 ? `rgb(255,${Math.round(61 + 194 * f)},${Math.round(110 + 145 * f)})` : (fever ? '#7fdcff' : COL.rim);
+    ctx.shadowBlur = (12 + f * 20) * scale;
+    ctx.beginPath();
+    ctx.arc(caps[i], hp.y, CFG.rimR * (1 + f * 0.3), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawTrail() {
+  if (fever || state === 'START') return;
+  for (let i = 0; i < history.length - 1; i++) {
+    const h = history[i];
+    const t = i / history.length;
+    ctx.fillStyle = `rgba(255,154,31,${t * 0.18})`;
+    ctx.beginPath();
+    ctx.arc(h.x, h.y, ball.r * (0.4 + t * 0.6), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawParticles() {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of particles) {
+    const t = p.life / p.max;
+    ctx.globalAlpha = Math.min(1, t * 1.3);
+    ctx.fillStyle = p.color;
+    const s = p.size * (0.25 + 0.75 * t);
+    if (p.square) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillRect(-s, -s * 0.5, s * 2, s);
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, s, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawLightning() {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+  for (let b = 0; b < 3; b++) {
+    if (Math.random() < 0.3) continue;
+    let a = rand(0, Math.PI * 2);
+    let x = ball.x + Math.cos(a) * ball.r, y = ball.y + Math.sin(a) * ball.r;
+    const segs = 4 + ((Math.random() * 3) | 0);
+    ctx.strokeStyle = `rgba(190,240,255,${rand(0.4, 0.9)})`;
+    ctx.lineWidth = rand(1, 2.2);
+    ctx.shadowColor = COL.fever;
+    ctx.shadowBlur = 10 * scale;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    for (let i = 0; i < segs; i++) {
+      a += rand(-0.9, 0.9);
+      x += Math.cos(a) * rand(6, 12);
+      y += Math.sin(a) * rand(6, 12);
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBall() {
+  const { x, y, r } = ball;
+  ctx.save();
+  ctx.translate(x, y);
+  const sq = ball.squash;
+  ctx.scale(1 + sq, 1 - sq);
+
+  const flick = fever ? 0.85 + Math.random() * 0.15 : 1;
+  ctx.shadowColor = fever ? COL.fever : COL.ball;
+  ctx.shadowBlur = (fever ? 34 : 18) * scale * flick;
+  const g = ctx.createRadialGradient(-r * 0.35, -r * 0.35, r * 0.1, 0, 0, r);
+  if (fever) {
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(0.45, '#a8ecff');
+    g.addColorStop(1, '#1f8dff');
+  } else {
+    g.addColorStop(0, '#ffd9a0');
+    g.addColorStop(0.5, COL.ball);
+    g.addColorStop(1, '#d9560b');
+  }
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Seams
+  ctx.rotate(ball.rot);
+  ctx.strokeStyle = fever ? 'rgba(20,70,160,0.45)' : 'rgba(80,25,0,0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-r, 0); ctx.lineTo(r, 0);
+  ctx.moveTo(0, -r); ctx.lineTo(0, r);
+  ctx.moveTo(-r * 0.62, -r * 0.78); ctx.quadraticCurveTo(-r * 0.15, 0, -r * 0.62, r * 0.78);
+  ctx.moveTo(r * 0.62, -r * 0.78);  ctx.quadraticCurveTo(r * 0.15, 0, r * 0.62, r * 0.78);
+  ctx.stroke();
+
+  if (fever) {
+    ctx.strokeStyle = `rgba(255,255,255,${0.5 + Math.random() * 0.5})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 2, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawFloor() {
+  const y = floor.y;
+  if (floor.broken) {
+    ctx.save();
+    ctx.strokeStyle = `rgba(255,51,85,${0.25 + 0.15 * Math.sin(time * 8)})`;
+    ctx.setLineDash([10, 12]);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  const danger = floor.charges <= 1;
+  const color = danger ? COL.warn : COL.floor;
+  const blink = danger ? 0.6 + 0.4 * Math.sin(time * 14) : 1;
+  ctx.save();
+  ctx.globalAlpha = 1 - floor.rebuild;
+  const g = ctx.createLinearGradient(0, y, 0, y + CFG.floorH + 40);
+  g.addColorStop(0, danger ? 'rgba(255,51,85,0.28)' : 'rgba(57,255,136,0.22)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, y, W, CFG.floorH + 40);
+
+  ctx.shadowColor = color;
+  ctx.shadowBlur = (12 + floor.flash * 26) * scale;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = (1 - floor.rebuild) * blink;
+  ctx.fillRect(0, y - 2, W, 4 + floor.flash * 3);
+
+  // Charge pips
+  ctx.shadowBlur = 6 * scale;
+  const pw = 26, gap = 8, total = CFG.floorCharges * pw + (CFG.floorCharges - 1) * gap;
+  for (let i = 0; i < CFG.floorCharges; i++) {
+    ctx.globalAlpha = (1 - floor.rebuild) * (i < floor.charges ? 0.9 : 0.15);
+    ctx.fillRect(W / 2 - total / 2 + i * (pw + gap), y + 10, pw, 5);
+  }
+  ctx.restore();
+}
+
+function drawRings() {
+  ctx.save();
+  for (const r of rings) {
+    const t = r.life / r.max;
+    ctx.globalAlpha = t;
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = 3 * t + 1;
+    ctx.beginPath();
+    if (r.flat) ctx.ellipse(r.x, r.y, r.r, r.r * 0.2, 0, 0, Math.PI * 2);
+    else ctx.ellipse(r.x, r.y, r.r, r.r * 0.45, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawPopups() {
+  for (const p of popups) {
+    const age = p.max - p.life;
+    const s = age < 0.15 ? easeOutBack(age / 0.15) : 1;
+    glowText(p.text, p.x, p.y, p.size * s, p.color, 14, Math.min(1, p.life / (p.max * 0.4)));
+  }
+}
+
+function drawFeverOverlay() {
+  if (!fever && feverFlash <= 0) return;
+  const pulse = 0.5 + 0.5 * Math.sin(time * 6);
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.75);
+  g.addColorStop(0, 'rgba(70,200,255,0)');
+  g.addColorStop(1, `rgba(70,200,255,${(fever ? 0.18 + pulse * 0.1 : 0) + feverFlash * 0.35})`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawHUD() {
+  ctx.save();
+  ctx.font = `900 16px ${FONT}`;
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.fillText('BEST ' + best, 16, 16);
+  ctx.textAlign = 'right';
+  ctx.fillText(String(score), W - 16, 16);
+  ctx.restore();
+
+  if (state !== 'PLAYING') return;
+
+  if (fever) {
+    const p = 1 + 0.08 * Math.sin(time * 10);
+    const hue = Math.random() < 0.12 ? '#ffffff' : COL.fever;
+    glowText('FEVER!', W / 2, 70, 46 * p, hue, 24);
+    glowText('x' + mult, W / 2, 114, 32, '#ffffff', 16);
+  } else if (streak === 1) {
+    glowText('SWISH 1/' + CFG.feverSwishes + ' — ONE MORE FOR FEVER', W / 2, 62, 14, COL.gold, 8, 0.75);
+  }
+
+  // Off-screen indicator when the ball flies above the view
+  if (ball.y + ball.r < camY) {
+    const x = clamp(ball.x, 14, W - 14);
+    ctx.fillStyle = fever ? COL.fever : COL.ball;
+    ctx.beginPath();
+    ctx.moveTo(x, 6); ctx.lineTo(x - 9, 20); ctx.lineTo(x + 9, 20);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function drawOverlay() {
+  if (state === 'START') {
+    ctx.fillStyle = 'rgba(5,5,10,0.55)';
+    ctx.fillRect(0, 0, W, H);
+    glowText('NEON', W / 2, 190, 78, COL.wallL, 26);
+    glowText('DUNK', W / 2, 270, 78, COL.wallR, 26);
+    const lines = [
+      'TAP / CLICK / SPACE TO BOUNCE',
+      'DROP THROUGH THE HOOP',
+      '2 SWISHES IN A ROW = FEVER',
+      'FLOOR BREAKS AFTER 3 BOUNCES',
+    ];
+    lines.forEach((l, i) => glowText(l, W / 2, 360 + i * 30, 15, 'rgba(230,235,255,0.85)', 4));
+    const a = 0.55 + 0.45 * Math.sin(time * 4);
+    glowText('TAP TO START', W / 2, 540, 30, '#ffffff', 18, a);
+    if (best > 0) glowText('BEST ' + best, W / 2, 590, 18, COL.gold, 8, 0.8);
+  } else if (state === 'OVER') {
+    const t = clamp(stateTime / 0.35, 0, 1);
+    ctx.fillStyle = `rgba(5,5,10,${0.65 * t})`;
+    ctx.fillRect(0, 0, W, H);
+    const s = easeOutBack(t);
+    glowText('GAME OVER', W / 2, 220, 52 * s, COL.warn, 24, t);
+    glowText(String(score), W / 2, 330, 110 * s, '#ffffff', 22, t);
+    if (newBest) glowText('NEW BEST!', W / 2, 420, 26, COL.gold, 16, t * (0.6 + 0.4 * Math.sin(time * 8)));
+    else glowText('BEST ' + best, W / 2, 420, 22, COL.gold, 8, t * 0.85);
+    if (stateTime > 0.6) {
+      const a = 0.55 + 0.45 * Math.sin(time * 4);
+      glowText('TAP TO RESTART', W / 2, 540, 28, '#ffffff', 18, a);
+    }
+  }
+}
+
+function draw() {
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const sx = shake ? rand(-1, 1) * shake : 0;
+  const sy = shake ? rand(-1, 1) * shake : 0;
+
+  ctx.save();
+  ctx.translate(sx, sy);
+  drawBackground();
+  drawBigScore();
+
+  // World space
+  ctx.save();
+  ctx.translate(0, -camY);
+  for (const hp of hoops) drawHoopBack(hp);
+  drawTrail();
+  drawParticles();
+  if (state !== 'OVER') {
+    if (fever) drawLightning();
+    drawBall();
+  }
+  for (const hp of hoops) drawHoopFront(hp);
+  drawRings();
+  drawFloor();
+  drawPopups();
+  ctx.restore();
+
+  drawWalls();
+  ctx.restore();
+
+  drawFeverOverlay();
+  drawHUD();
+  drawOverlay();
+}
+
+/* =====================================================================
+   H. INPUT
+   ===================================================================== */
+function onPress(e) {
+  if (e && e.cancelable) e.preventDefault();
+  initAudio();
+  if (state === 'START') {
+    startGame();
+  } else if (state === 'PLAYING') {
+    jump();
+  } else if (state === 'OVER' && stateTime > 0.6) {
+    reset();
+    startGame();
+  }
+}
+window.addEventListener('pointerdown', onPress, { passive: false });
+window.addEventListener('touchstart', e => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+window.addEventListener('contextmenu', e => e.preventDefault());
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Enter') {
+    e.preventDefault();
+    if (!e.repeat) onPress(e);
+  } else if (e.code === 'KeyM') {
+    muted = !muted;
+  }
+});
+
+/* =====================================================================
+   I. MAIN LOOP (delta-time, capped so tab switches don't explode physics)
+   ===================================================================== */
+reset();
+let last = performance.now();
+document.addEventListener('visibilitychange', () => { last = performance.now(); });
+
+function frame(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (!(dt > 0)) dt = 0;
+  dt = Math.min(dt, 1 / 30);
+  update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
